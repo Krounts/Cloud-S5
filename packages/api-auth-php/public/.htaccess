@@ -1,0 +1,10 @@
+RewriteEngine On
+
+# Allow health endpoint
+<Files "health">
+    Require all granted
+</Files>
+
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.php [QSA,L]

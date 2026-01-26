@@ -1,0 +1,31 @@
+{
+  "name": "cloud-s5-project",
+  "version": "1.0.0",
+  "description": "Road work reporting system for Antananarivo",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "install-all": "yarn install",
+    "dev": "yarn workspaces run dev",
+    "dev:mobile-vue": "yarn workspace mobile-app-vue dev",
+    "dev:mobile": "yarn workspace mobile-app dev",
+    "dev:web": "yarn workspace web-app dev",
+    "build": "yarn workspaces run build",
+    "test": "yarn workspaces run test",
+    "lint": "yarn workspaces run lint",
+    "docker:up": "docker-compose -f docker-compose.yml up -d",
+    "docker:down": "docker-compose -f docker-compose.yml down",
+    "docker:logs": "docker-compose -f docker-compose.yml logs -f"
+  },
+  "keywords": [
+    "road-work",
+    "reporting",
+    "antananarivo",
+    "mapping",
+    "authentication"
+  ],
+  "author": "Cloud S5 Team - Promotion 17",
+  "license": "MIT"
+}

@@ -1,0 +1,16 @@
+{
+  "name": "cloud-s5/api-auth-php",
+  "description": "PHP MVC Authentication API for Cloud S5",
+  "type": "project",
+  "require": {
+    "vlucas/phpdotenv": "^5.5",
+    "firebase/php-jwt": "^6.10",
+    "ext-pdo": "*",
+    "ext-pgsql": "*"
+  },
+  "autoload": {
+    "psr-4": {
+      "App\\": "src/"
+    }
+  }
+}

@@ -1,0 +1,61 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: cloud-s5-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123
+      POSTGRES_DB: cloud_user
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - cloud-s5-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d cloud_user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  offline-maps:
+    image: nginx:alpine
+    container_name: cloud-s5-maps
+    ports:
+      - "8080:80"
+    volumes:
+      - ./docker/offline-maps/data:/usr/share/nginx/html
+    networks:
+      - cloud-s5-network
+    environment:
+      - NODE_ENV=production
+
+  api-auth:
+    build:
+      context: ./packages/api-auth-php
+      dockerfile: Dockerfile
+    container_name: cloud-s5-api-auth
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: cloud_user
+      DB_USER: postgres
+      DB_PASSWORD: postgres123
+      JWT_SECRET: ${JWT_SECRET:-your-secret-key-change-in-production}
+      JWT_EXPIRE_IN: ${JWT_EXPIRE_IN:-24h}
+      SESSION_MAX_ATTEMPTS: ${SESSION_MAX_ATTEMPTS:-3}
+    ports:
+      - "3001:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - cloud-s5-network
+
+volumes:
+  postgres_data:
+
+networks:
+  cloud-s5-network:
+    driver: bridge

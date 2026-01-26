@@ -1,0 +1,54 @@
+# Dependencies
+node_modules/
+yarn.lock
+package-lock.json
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Build outputs
+dist/
+build/
+*.min.js
+*.min.css
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+.DS_Store
+*.sublime-workspace
+
+# Testing
+coverage/
+.nyc_output/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Docker
+.docker/
+postgres_data/
+
+# Mobile app specific
+platforms/
+plugins/
+www/
+resources/
+
+# Temporary files
+tmp/
+temp/
+.cache/
+
+# APK builds
+*.apk
+*.ipa
