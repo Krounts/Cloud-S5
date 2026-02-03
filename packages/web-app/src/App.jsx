@@ -3,6 +3,7 @@ import { MapContainer, TileLayer, Marker, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import './App.css'
+import FirebaseService from './services/FirebaseService'
 
 // Fix for default markers
 delete L.Icon.Default.prototype._getIconUrl
@@ -100,37 +101,252 @@ function App() {
   const [reports, setReports] = useState([])
   const [isLoading, setIsLoading] = useState(true)
   const [errorMsg, setErrorMsg] = useState('')
+  const [adminToken, setAdminToken] = useState(() => localStorage.getItem('adminToken') || '')
+  const [adminUser, setAdminUser] = useState(() => {
+    const raw = localStorage.getItem('adminUser')
+    return raw ? JSON.parse(raw) : null
+  })
+  const [adminTab, setAdminTab] = useState('reports')
+  const [adminLoading, setAdminLoading] = useState(false)
+  const [adminError, setAdminError] = useState('')
+  const [adminMessage, setAdminMessage] = useState('')
+  const [users, setUsers] = useState([])
+  const [lockedOnly, setLockedOnly] = useState(true)
+  const [loginForm, setLoginForm] = useState({ email: '', password: '' })
+  const [newUser, setNewUser] = useState({ email: '', password: '', firstName: '', lastName: '', role: 'user' })
+
+  const fetchWithTimeout = async (url, options = {}, timeoutMs = 8000) => {
+    const controller = new AbortController()
+    const id = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      return await fetch(url, { ...options, signal: controller.signal })
+    } finally {
+      clearTimeout(id)
+    }
+  }
+
+  const loadReports = async () => {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 4000)
+    try {
+      setIsLoading(true)
+      setErrorMsg('')
+
+      // Détecter si on est en ligne
+      const isOnline = navigator.onLine
+
+      if (isOnline) {
+        // MODE EN LIGNE : Charger depuis Firebase
+        try {
+          if (!FirebaseService.isInitialized()) {
+            await FirebaseService.initialize()
+          }
+          const firebaseReports = await FirebaseService.fetchReports()
+          if (firebaseReports.length > 0) {
+            console.log('Reports loaded from Firebase (online mode):', firebaseReports.length)
+            setReports(firebaseReports)
+            return
+          } else {
+            console.log('No reports in Firebase, trying PostgreSQL...')
+          }
+        } catch (firebaseError) {
+          console.warn('Firebase failed, falling back to PostgreSQL:', firebaseError)
+        }
+      }
+
+      // MODE HORS LIGNE ou fallback : Charger depuis PostgreSQL
+      console.log('Loading from PostgreSQL (offline mode or fallback)')
+      const resp = await fetch('/api/reports', { signal: controller.signal })
+      const payload = await resp.json().catch(() => [])
+      const raw = Array.isArray(payload) ? payload : payload?.reports ?? payload?.data ?? []
+      const normalized = normalizeReports(raw)
+
+      if (!resp.ok) {
+        throw new Error('API indisponible')
+      }
+
+      setReports(normalized)
+    } catch (err) {
+      console.warn('Falling back to demo data:', err?.message || err)
+      setErrorMsg('Données indisponibles : affichage d\'exemples pour la démo.')
+      setReports(fallbackReports)
+    } finally {
+      clearTimeout(timeout)
+      setIsLoading(false)
+    }
+  }
 
   useEffect(() => {
-    const loadReports = async () => {
-      const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), 4000)
-      try {
-        setIsLoading(true)
-        setErrorMsg('')
-
-        const resp = await fetch('/api/reports', { signal: controller.signal })
-        const payload = await resp.json().catch(() => [])
-        const raw = Array.isArray(payload) ? payload : payload?.reports ?? payload?.data ?? []
-        const normalized = normalizeReports(raw)
-
-        if (!resp.ok || normalized.length === 0) {
-          throw new Error('API indisponible')
-        }
-
-        setReports(normalized)
-      } catch (err) {
-        console.warn('Falling back to demo data:', err?.message || err)
-        setErrorMsg('Données API indisponibles : affichage d\'exemples pour la démo publique.')
-        setReports(fallbackReports)
-      } finally {
-        clearTimeout(timeout)
-        setIsLoading(false)
-      }
-    }
-
     loadReports()
   }, [])
+
+  const adminFetch = async (path, options = {}) => {
+    const resp = await fetchWithTimeout(path, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(options.headers || {}),
+        ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}),
+      },
+    })
+    const text = await resp.text()
+    const data = text ? JSON.parse(text) : null
+    if (!resp.ok) {
+      throw new Error(data?.error || `Erreur API (${resp.status})`)
+    }
+    return data
+  }
+
+  const handleAdminLogin = async (e) => {
+    e.preventDefault()
+    setAdminError('')
+    setAdminMessage('')
+    setAdminLoading(true)
+    try {
+      const resp = await fetchWithTimeout('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(loginForm),
+      })
+      const data = await resp.json()
+      if (!resp.ok) throw new Error(data?.error || 'Connexion échouée')
+      if (!['admin', 'manager'].includes(data?.user?.role)) {
+        throw new Error('Compte non autorisé')
+      }
+      setAdminToken(data.token)
+      setAdminUser(data.user)
+      localStorage.setItem('adminToken', data.token)
+      localStorage.setItem('adminUser', JSON.stringify(data.user))
+      setAdminMessage('Connexion admin réussie')
+    } catch (err) {
+      setAdminError(err.message || 'Connexion échouée')
+    } finally {
+      setAdminLoading(false)
+    }
+  }
+
+  const handleAdminLogout = () => {
+    setAdminToken('')
+    setAdminUser(null)
+    localStorage.removeItem('adminToken')
+    localStorage.removeItem('adminUser')
+  }
+
+  const loadUsers = async () => {
+    setAdminError('')
+    setAdminLoading(true)
+    try {
+      const data = await adminFetch(`/api/admin/users${lockedOnly ? '?locked=true' : ''}`)
+      setUsers(Array.isArray(data) ? data : [])
+    } catch (err) {
+      setAdminError(err.message || 'Erreur chargement utilisateurs')
+    } finally {
+      setAdminLoading(false)
+    }
+  }
+
+  const handleCreateUser = async (e) => {
+    e.preventDefault()
+    setAdminError('')
+    setAdminMessage('')
+    setAdminLoading(true)
+    try {
+      await adminFetch('/api/admin/users', { method: 'POST', body: JSON.stringify(newUser) })
+      setAdminMessage('Utilisateur créé')
+      setNewUser({ email: '', password: '', firstName: '', lastName: '', role: 'user' })
+      await loadUsers()
+    } catch (err) {
+      setAdminError(err.message || 'Erreur création utilisateur')
+    } finally {
+      setAdminLoading(false)
+    }
+  }
+
+  const handleUnlockUser = async (userId) => {
+    setAdminError('')
+    setAdminMessage('')
+    setAdminLoading(true)
+    try {
+      await adminFetch('/api/admin/reset-attempts', { method: 'POST', body: JSON.stringify({ userId }) })
+      setAdminMessage('Utilisateur débloqué')
+      await loadUsers()
+    } catch (err) {
+      setAdminError(err.message || 'Erreur déblocage utilisateur')
+    } finally {
+      setAdminLoading(false)
+    }
+  }
+
+  const handleReportFieldChange = (id, field, value) => {
+    setReports((prev) => prev.map((r) => (r.id === id ? { ...r, [field]: value } : r)))
+  }
+
+  const handleUpdateReport = async (report) => {
+    setAdminError('')
+    setAdminMessage('')
+    setAdminLoading(true)
+    try {
+      const payload = {
+        id: report.id,
+        title: report.title,
+        description: report.description,
+        area_m2: Number(report.area_m2) || 0,
+        budget: Number(report.budget) || 0,
+        company: report.company,
+        status: report.status,
+      }
+      const data = await adminFetch('/api/admin/reports/update', { method: 'POST', body: JSON.stringify(payload) })
+      if (data?.report) {
+        setReports((prev) => prev.map((r) => (r.id === data.report.id ? { ...r, ...data.report } : r)))
+      }
+      setAdminMessage('Signalement mis à jour')
+    } catch (err) {
+      setAdminError(err.message || 'Erreur mise à jour signalement')
+    } finally {
+      setAdminLoading(false)
+    }
+  }
+
+  const handleSync = async () => {
+    setAdminError('')
+    setAdminMessage('')
+    setAdminLoading(true)
+    try {
+      const data = await adminFetch('/api/admin/sync-firebase', { method: 'POST' })
+      const imported = data?.imported ?? 0
+      const msg = data?.message || 'Synchronisation terminée'
+      setAdminMessage(`${msg} - ${imported} signalement(s) importé(s)`)
+      // Recharger les signalements
+      await loadReports()
+    } catch (err) {
+      setAdminError(err.message || 'Erreur synchronisation')
+    } finally {
+      setAdminLoading(false)
+    }
+  }
+
+  const handlePushToFirebase = async () => {
+    setAdminError('')
+    setAdminMessage('')
+    setAdminLoading(true)
+    try {
+      const data = await adminFetch('/api/admin/push-to-firebase', { method: 'POST' })
+      const pushed = data?.pushed ?? 0
+      const total = data?.total ?? 0
+      const msg = data?.message || 'Envoi terminé'
+      setAdminMessage(`${msg} - ${pushed}/${total} signalement(s) envoyé(s) vers Firebase`)
+    } catch (err) {
+      setAdminError(err.message || 'Erreur envoi Firebase')
+    } finally {
+      setAdminLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (adminToken) {
+      loadUsers()
+    }
+  }, [adminToken, lockedOnly])
 
   const summary = useMemo(() => {
     const totalReports = reports.length
@@ -178,156 +394,364 @@ function App() {
           </div>
         )}
 
-        <section className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2">
-            <div className="bg-white rounded-xl shadow-lg overflow-hidden" style={{ height: '540px' }}>
-              {isLoading ? (
-                <div className="h-full flex flex-col items-center justify-center gap-3 text-gray-500">
-                  <div className="animate-spin w-8 h-8 border-4 border-blue-200 border-t-blue-600 rounded-full"></div>
-                  <span>Chargement de la carte...</span>
-                </div>
-              ) : (
-                <MapContainer
-                  center={[-18.8792, 47.5079]}
-                  zoom={13}
-                  style={{ height: '100%', width: '100%' }}
-                >
-                  <TileLayer
-                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                    attribution="&copy; OpenStreetMap contributors"
-                  />
-                  {reports.map((report) => (
-                    <Marker key={report.id} position={[report.latitude, report.longitude]}>
-                      <Tooltip direction="top" offset={[0, -10]} opacity={0.98} permanent={false}>
-                        <div className="text-sm space-y-2">
-                          <div className="font-bold text-gray-900">{report.title}</div>
-                          <div className="flex items-center gap-2 text-xs">
-                            <span className={`px-3 py-1 rounded-full text-[10px] font-bold ${statusColors[report.status] ?? 'bg-gray-100 text-gray-700'}`}>
-                              {statusLabels[report.status] ?? report.status}
-                            </span>
-                            <span className="text-gray-500">{formatDate(report.created_at)}</span>
+        <section className="bg-white rounded-xl shadow-lg p-6 border border-gray-100">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-2xl font-bold text-gray-900">🛡️ Module Admin</h2>
+              <p className="text-sm text-gray-600 mt-1">Connexion, utilisateurs, synchronisation, gestion des signalements</p>
+            </div>
+            {adminUser && (
+              <div className="text-xs text-gray-600 bg-gray-100 px-3 py-2 rounded-full">
+                {adminUser.firstName} {adminUser.lastName} • {adminUser.role}
+              </div>
+            )}
+          </div>
+
+          {adminError && (
+            <div className="bg-red-50 border-l-4 border-red-400 text-red-800 px-4 py-3 rounded-lg mb-4 text-sm">
+              {adminError}
+            </div>
+          )}
+          {adminMessage && (
+            <div className="bg-green-50 border-l-4 border-green-400 text-green-800 px-4 py-3 rounded-lg mb-4 text-sm">
+              {adminMessage}
+            </div>
+          )}
+
+          {!adminToken ? (
+            <form onSubmit={handleAdminLogin} className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <input
+                className="border rounded-lg px-3 py-2"
+                type="email"
+                placeholder="Email admin"
+                value={loginForm.email}
+                onChange={(e) => setLoginForm((p) => ({ ...p, email: e.target.value }))}
+                required
+              />
+              <input
+                className="border rounded-lg px-3 py-2"
+                type="password"
+                placeholder="Mot de passe"
+                value={loginForm.password}
+                onChange={(e) => setLoginForm((p) => ({ ...p, password: e.target.value }))}
+                required
+              />
+              <button
+                className="bg-blue-600 text-white rounded-lg px-4 py-2 font-semibold hover:bg-blue-700"
+                type="submit"
+                disabled={adminLoading}
+              >
+                {adminLoading ? 'Connexion...' : 'Se connecter'}
+              </button>
+            </form>
+          ) : (
+            <div>
+              <div className="admin-tabs">
+                {['reports', 'users', 'sync'].map((tab) => (
+                  <button
+                    key={tab}
+                    onClick={() => setAdminTab(tab)}
+                    className={`tab-button ${adminTab === tab ? 'active' : ''}`}
+                  >
+                    {tab === 'reports' && '📋 Signalements'}
+                    {tab === 'users' && '👥 Utilisateurs'}
+                    {tab === 'sync' && '🔄 Synchronisation'}
+                  </button>
+                ))}
+                <button onClick={handleAdminLogout} className="tab-button tab-button-logout">
+                  🚪 Déconnexion
+                </button>
+              </div>
+
+              {adminTab === 'reports' && (
+                <div className="section">
+                  <h3>📋 Gestion des signalements</h3>
+                  {reports.length === 0 ? (
+                    <p className="text-gray-500">Aucun signalement</p>
+                  ) : (
+                    reports.map((report) => (
+                      <div key={report.id} className="report-edit-card">
+                        <div className="report-edit-grid">
+                          <div className="form-group" style={{gridColumn: '1 / -1'}}>
+                            <label>Titre</label>
+                            <input
+                              type="text"
+                              value={report.title || ''}
+                              onChange={(e) => handleReportFieldChange(report.id, 'title', e.target.value)}
+                              placeholder="Titre du problème"
+                            />
                           </div>
-                          <div className="bg-gray-50 px-2 py-1 rounded text-xs text-gray-700 space-y-0.5">
-                            <div>📐 Surface: {formatNumber(report.area_m2, ' m²')}</div>
-                            <div>💰 Budget: {formatCurrency(report.budget)}</div>
-                            <div>🏢 {report.company}</div>
+                          <div className="form-group" style={{gridColumn: '1 / -1'}}>
+                            <label>Description</label>
+                            <textarea
+                              value={report.description || ''}
+                              onChange={(e) => handleReportFieldChange(report.id, 'description', e.target.value)}
+                              placeholder="Détails du problème"
+                            />
                           </div>
+                          <div className="form-group">
+                            <label>Surface (m²)</label>
+                            <input
+                              type="number"
+                              value={report.area_m2 ?? ''}
+                              onChange={(e) => handleReportFieldChange(report.id, 'area_m2', e.target.value)}
+                              placeholder="0"
+                            />
+                          </div>
+                          <div className="form-group">
+                            <label>Budget (MGA)</label>
+                            <input
+                              type="number"
+                              value={report.budget ?? ''}
+                              onChange={(e) => handleReportFieldChange(report.id, 'budget', e.target.value)}
+                              placeholder="0"
+                            />
+                          </div>
+                          <div className="form-group">
+                            <label>Entreprise</label>
+                            <input
+                              type="text"
+                              value={report.company || ''}
+                              onChange={(e) => handleReportFieldChange(report.id, 'company', e.target.value)}
+                              placeholder="Nom de l'entreprise"
+                            />
+                          </div>
+                          <div className="form-group">
+                            <label>Statut</label>
+                            <select
+                              value={report.status}
+                              onChange={(e) => handleReportFieldChange(report.id, 'status', e.target.value)}
+                            >
+                              <option value="new">Nouveau</option>
+                              <option value="in_progress">En cours</option>
+                              <option value="completed">Terminé</option>
+                              <option value="closed">Clos</option>
+                            </select>
+                          </div>
+                          <button
+                            className="button-primary"
+                            onClick={() => handleUpdateReport(report)}
+                            disabled={adminLoading}
+                            style={{height: 'fit-content'}}
+                          >
+                            ✓ Mettre à jour
+                          </button>
                         </div>
-                      </Tooltip>
-                    </Marker>
-                  ))}
-                </MapContainer>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+
+              {adminTab === 'users' && (
+                <div className="section">
+                  <h3>👥 Gestion des utilisateurs</h3>
+                  
+                  <form onSubmit={handleCreateUser} className="create-user-form">
+                    <div style={{display: 'flex', alignItems: 'center', marginBottom: '1rem', gap: '0.5rem'}}>
+                      <span style={{fontWeight: 600, color: 'var(--primary)'}}>➕ Créer un nouvel utilisateur</span>
+                    </div>
+                    <div className="create-user-grid">
+                      <div className="form-group">
+                        <label>Email</label>
+                        <input 
+                          type="email"
+                          placeholder="utilisateur@example.com" 
+                          value={newUser.email} 
+                          onChange={(e) => setNewUser((p) => ({ ...p, email: e.target.value }))} 
+                          required 
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Mot de passe</label>
+                        <input 
+                          type="password"
+                          placeholder="••••••••" 
+                          value={newUser.password} 
+                          onChange={(e) => setNewUser((p) => ({ ...p, password: e.target.value }))} 
+                          required 
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Prénom</label>
+                        <input 
+                          type="text"
+                          placeholder="Prénom" 
+                          value={newUser.firstName} 
+                          onChange={(e) => setNewUser((p) => ({ ...p, firstName: e.target.value }))} 
+                          required 
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Nom</label>
+                        <input 
+                          type="text"
+                          placeholder="Nom" 
+                          value={newUser.lastName} 
+                          onChange={(e) => setNewUser((p) => ({ ...p, lastName: e.target.value }))} 
+                          required 
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Rôle</label>
+                        <select 
+                          value={newUser.role} 
+                          onChange={(e) => setNewUser((p) => ({ ...p, role: e.target.value }))}
+                        >
+                          <option value="user">Utilisateur</option>
+                          <option value="manager">Manager</option>
+                          <option value="admin">Admin</option>
+                        </select>
+                      </div>
+                      <button className="button-primary" type="submit" disabled={adminLoading} style={{height: 'fit-content'}}>
+                        ➕ Créer
+                      </button>
+                    </div>
+                  </form>
+
+                  <div style={{display: 'flex', alignItems: 'center', gap: '1.5rem', marginBottom: '1.5rem'}}>
+                    <label style={{display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.95rem', cursor: 'pointer'}}>
+                      <input 
+                        type="checkbox" 
+                        checked={lockedOnly} 
+                        onChange={(e) => setLockedOnly(e.target.checked)} 
+                        style={{cursor: 'pointer'}}
+                      />
+                      Afficher seulement les comptes bloqués
+                    </label>
+                    <button onClick={loadUsers} className="button-secondary" style={{padding: '0.6rem 1rem'}}>
+                      🔄 Rafraîchir
+                    </button>
+                  </div>
+
+                  <table className="users-table">
+                    <thead>
+                      <tr>
+                        <th>Email</th>
+                        <th>Nom</th>
+                        <th>Rôle</th>
+                        <th>Statut</th>
+                        <th>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {users.length === 0 ? (
+                        <tr>
+                          <td colSpan="5" style={{textAlign: 'center', color: 'var(--gray-500)'}}>
+                            Aucun utilisateur
+                          </td>
+                        </tr>
+                      ) : (
+                        users.map((u) => (
+                          <tr key={u.id}>
+                            <td><strong>{u.email}</strong></td>
+                            <td>{u.first_name} {u.last_name}</td>
+                            <td>
+                              <span style={{fontSize: '0.85rem', fontWeight: 600, textTransform: 'uppercase', color: 'var(--primary)'}}>
+                                {u.role}
+                              </span>
+                            </td>
+                            <td>
+                              <span className={`user-status-badge ${u.is_locked ? 'user-locked' : 'user-unlocked'}`}>
+                                {u.is_locked ? '🔒 Bloqué' : '✓ Actif'}
+                              </span>
+                            </td>
+                            <td>
+                              {u.is_locked && (
+                                <button 
+                                  className="button-danger"
+                                  onClick={() => handleUnlockUser(u.id)}
+                                  disabled={adminLoading}
+                                >
+                                  🔓 Débloquer
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {adminTab === 'sync' && (
+                <div className="section">
+                  <h3>🔄 Synchronisation Firebase ↔ PostgreSQL</h3>
+                  
+                  <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem'}}>
+                    <div style={{padding: '1.5rem', backgroundColor: 'var(--primary-light)', borderRadius: '10px', border: '2px solid var(--primary)'}}>
+                      <h4 style={{margin: '0 0 0.75rem 0', color: 'var(--primary)', fontWeight: 700}}>⬇️ Importer depuis Firebase</h4>
+                      <p style={{margin: '0 0 1rem 0', fontSize: '0.9rem', color: 'var(--gray-600)'}}>
+                        Récupérer les signalements en ligne (Firebase → PostgreSQL)
+                      </p>
+                      <button 
+                        className="sync-button"
+                        onClick={handleSync} 
+                        disabled={adminLoading}
+                      >
+                        ⬇️ {adminLoading ? 'Synchronisation...' : 'Importer depuis Firebase'}
+                      </button>
+                    </div>
+
+                    <div style={{padding: '1.5rem', backgroundColor: 'rgba(16, 185, 129, 0.08)', borderRadius: '10px', border: '2px solid #10b981'}}>
+                      <h4 style={{margin: '0 0 0.75rem 0', color: '#065f46', fontWeight: 700}}>⬆️ Pousser vers Firebase</h4>
+                      <p style={{margin: '0 0 1rem 0', fontSize: '0.9rem', color: 'var(--gray-600)'}}>
+                        Envoyer les signalements locaux vers Firebase (PostgreSQL → Firebase)
+                      </p>
+                      <button 
+                        className="sync-button"
+                        style={{background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)'}}
+                        onClick={handlePushToFirebase} 
+                        disabled={adminLoading}
+                      >
+                        ⬆️ {adminLoading ? 'Envoi...' : 'Pousser vers Firebase'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
               )}
             </div>
-          </div>
-
-          <div className="bg-gradient-to-br from-white to-blue-50 rounded-xl shadow-lg p-6 border border-blue-100">
-            <div className="mb-6">
-              <h2 className="text-2xl font-bold text-gray-900">📊 Récapitulatif</h2>
-              <p className="text-sm text-gray-600 mt-1">Vue d'ensemble des signalements</p>
-            </div>
-            
-            <div className="space-y-4">
-              <div className="bg-white rounded-lg p-4 shadow-sm border border-blue-100 hover:shadow-md transition">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">📍 Points</p>
-                    <p className="text-3xl font-bold text-blue-600 mt-1">{summary.totalReports}</p>
-                  </div>
-                  <div className="text-4xl opacity-20">📍</div>
-                </div>
-              </div>
-
-              <div className="bg-white rounded-lg p-4 shadow-sm border border-amber-100 hover:shadow-md transition">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">📏 Surface</p>
-                    <p className="text-3xl font-bold text-amber-600 mt-1">{formatNumber(summary.totalArea)} m²</p>
-                  </div>
-                  <div className="text-4xl opacity-20">📏</div>
-                </div>
-              </div>
-
-              <div className="bg-white rounded-lg p-4 shadow-sm border border-green-100 hover:shadow-md transition">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">💰 Budget</p>
-                    <p className="text-2xl font-bold text-green-600 mt-1">{formatCurrency(summary.totalBudget)}</p>
-                  </div>
-                  <div className="text-4xl opacity-20">💰</div>
-                </div>
-              </div>
-
-              <div className="bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg p-4 text-white shadow-md">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-xs font-semibold opacity-90 uppercase tracking-wide">⚙️ Avancement</p>
-                    <p className="text-3xl font-bold mt-1">{summary.progressPercent}%</p>
-                  </div>
-                  <div className="w-16 h-16 rounded-full border-4 border-white border-opacity-30 flex items-center justify-center">
-                    <span className="text-2xl font-bold">{summary.progressPercent}%</span>
-                  </div>
-                </div>
-                <div className="mt-3 bg-white bg-opacity-20 rounded-full h-2 overflow-hidden">
-                  <div 
-                    className="h-full bg-white transition-all duration-500"
-                    style={{ width: `${summary.progressPercent}%` }}
-                  ></div>
-                </div>
-              </div>
-            </div>
-          </div>
+          )}
         </section>
 
-        <section className="bg-white rounded-xl shadow-lg p-6 border border-gray-100">
-          <div className="flex items-center justify-between mb-6">
-            <div>
-              <h3 className="text-2xl font-bold text-gray-900">📋 Signalements récents</h3>
-              <p className="text-sm text-gray-600 mt-1">{reports.length} signalement{reports.length !== 1 ? 's' : ''} en cours de suivi</p>
-            </div>
-            <span className="text-xs text-gray-500 bg-gray-100 px-3 py-1 rounded-full">Lecture seule</span>
-          </div>
-          
-          {reports.length === 0 ? (
-            <div className="text-center py-12 text-gray-500">
-              <p className="text-lg">Aucun signalement pour le moment</p>
+        <section className="bg-white rounded-xl shadow-lg overflow-hidden" style={{ height: '540px' }}>
+          {isLoading ? (
+            <div className="h-full flex flex-col items-center justify-center gap-3 text-gray-500">
+              <div className="animate-spin w-8 h-8 border-4 border-blue-200 border-t-blue-600 rounded-full"></div>
+              <span>Chargement de la carte...</span>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+            <MapContainer
+              center={[-18.8792, 47.5079]}
+              zoom={13}
+              style={{ height: '100%', width: '100%' }}
+            >
+              <TileLayer
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                attribution="&copy; OpenStreetMap contributors"
+              />
               {reports.map((report) => (
-                <article 
-                  key={report.id} 
-                  className="border border-gray-200 rounded-lg p-5 shadow-sm hover:shadow-lg hover:border-blue-300 transition-all duration-200 hover:translate-y-[-2px]"
-                >
-                  <div className="flex items-start justify-between mb-3 gap-2">
-                    <h4 className="font-bold text-gray-900 text-base leading-tight flex-1">{report.title}</h4>
-                    <span className={`px-3 py-1 rounded-full text-[11px] font-bold whitespace-nowrap ${statusColors[report.status] ?? 'bg-gray-100 text-gray-700'}`}>
-                      {statusLabels[report.status] ?? report.status}
-                    </span>
-                  </div>
-                  
-                  <p className="text-xs text-gray-500 mb-3 flex items-center gap-1">
-                    📅 {formatDate(report.created_at)}
-                  </p>
-                  
-                  <p className="text-sm text-gray-700 mb-4 line-clamp-2 leading-relaxed">
-                    {report.description || '—'}
-                  </p>
-                  
-                  <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-lg p-3 space-y-2 border border-blue-100">
-                    <div className="text-sm text-gray-700">
-                      <span className="font-semibold">📐</span> {formatNumber(report.area_m2, ' m²')}
+                <Marker key={report.id} position={[report.latitude, report.longitude]}>
+                  <Tooltip direction="top" offset={[0, -10]} opacity={0.98} permanent={false}>
+                    <div className="text-sm space-y-2">
+                      <div className="font-bold text-gray-900">{report.title}</div>
+                      <div className="flex items-center gap-2 text-xs">
+                        <span className={`px-3 py-1 rounded-full text-[10px] font-bold ${statusColors[report.status] ?? 'bg-gray-100 text-gray-700'}`}>
+                          {statusLabels[report.status] ?? report.status}
+                        </span>
+                        <span className="text-gray-500">{formatDate(report.created_at)}</span>
+                      </div>
+                      <div className="bg-gray-50 px-2 py-1 rounded text-xs text-gray-700 space-y-0.5">
+                        <div>📐 Surface: {formatNumber(report.area_m2, ' m²')}</div>
+                        <div>💰 Budget: {formatCurrency(report.budget)}</div>
+                        <div>🏢 {report.company}</div>
+                      </div>
                     </div>
-                    <div className="text-sm text-gray-700">
-                      <span className="font-semibold">💰</span> {formatCurrency(report.budget)}
-                    </div>
-                    <div className="text-sm text-gray-700">
-                      <span className="font-semibold">🏢</span> {report.company}
-                    </div>
-                  </div>
-                </article>
+                  </Tooltip>
+                </Marker>
               ))}
-            </div>
+            </MapContainer>
           )}
         </section>
 

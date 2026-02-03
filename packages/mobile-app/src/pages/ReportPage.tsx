@@ -15,8 +15,11 @@ import {
   IonText,
   IonSpinner,
 } from '@ionic/react'
+import { useLocationContext } from '../context/LocationContext'
+import FirebaseService from '../services/FirebaseService'
 
 const ReportPage: React.FC = () => {
+  const { selectedLocation, setSelectedLocation } = useLocationContext()
   const [formData, setFormData] = useState({
     title: '',
     description: '',
@@ -31,29 +34,32 @@ const ReportPage: React.FC = () => {
   const [loading, setLoading] = useState(false)
   const [submitted, setSubmitted] = useState(false)
   const [error, setError] = useState('')
-  const [locationStatus, setLocationStatus] = useState('Obtenir position...')
+  const [locationStatus, setLocationStatus] = useState('Sélectionnez une position sur la carte')
 
-  // Obtenir la position GPS au chargement
+  // Récupérer les coordonnées depuis la carte uniquement
   useEffect(() => {
-    if ('geolocation' in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          setFormData((prev) => ({
-            ...prev,
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude,
-          }))
-          setLocationStatus(`Position obtenue: ${position.coords.latitude.toFixed(4)}, ${position.coords.longitude.toFixed(4)}`)
-        },
-        (err) => {
-          setLocationStatus(`Erreur GPS: ${err.message}`)
-          console.error('Geolocation error:', err)
-        }
-      )
+    const params = new URLSearchParams(window.location.search)
+    const qLat = Number(params.get('lat'))
+    const qLng = Number(params.get('lng'))
+    const queryLocation = Number.isFinite(qLat) && Number.isFinite(qLng) ? { lat: qLat, lng: qLng } : null
+
+    const stored = sessionStorage.getItem('reportLocation')
+    const storedLocation = stored ? JSON.parse(stored) : null
+    const locationToUse = selectedLocation ?? queryLocation ?? storedLocation
+
+    if (locationToUse?.lat && locationToUse?.lng) {
+      setFormData((prev) => ({
+        ...prev,
+        latitude: locationToUse.lat,
+        longitude: locationToUse.lng,
+      }))
+      setLocationStatus(`📍 Carte: ${locationToUse.lat.toFixed(4)}, ${locationToUse.lng.toFixed(4)}`)
+      setSelectedLocation(null)
+      sessionStorage.removeItem('reportLocation')
     } else {
-      setLocationStatus('Géolocalisation non disponible')
+      setLocationStatus('⚠️ Veuillez choisir un point sur la carte avant de signaler')
     }
-  }, [])
+  }, [selectedLocation, setSelectedLocation])
 
   const handleInputChange = (e: any) => {
     const name = e.target?.name || e.currentTarget?.name
@@ -82,6 +88,10 @@ const ReportPage: React.FC = () => {
       setError('Le titre est obligatoire')
       return
     }
+    if (!formData.latitude || !formData.longitude) {
+      setError('Veuillez choisir un point sur la carte avant de signaler')
+      return
+    }
 
     setLoading(true)
 
@@ -93,39 +103,25 @@ const ReportPage: React.FC = () => {
         budget: parseFloat(formData.budget) || 0,
         company: formData.company.trim(),
         status: formData.status,
-        latitude: formData.latitude || -18.8792,
-        longitude: formData.longitude || 47.5079,
+        latitude: formData.latitude,
+        longitude: formData.longitude,
       }
 
       console.log('Sending report:', payload)
 
-      // Avec timeout de 10 secondes
-      const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), 10000)
+      // Détecter si on est en ligne ou hors ligne
+      const isOnline = navigator.onLine
 
-      try {
-        const response = await fetch('/api/reports', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(payload),
-          signal: controller.signal,
-        })
-
-        clearTimeout(timeoutId)
-        console.log('Response status:', response.status)
-        const text = await response.text()
-        console.log('Response text:', text)
-
-        if (!text) {
-          setError('Le serveur n\'a pas répondu. Vérifiez que le backend est lancé avec: yarn docker:up')
-          return
-        }
-
-        const data = JSON.parse(text)
-
-        if (response.ok) {
+      if (isOnline) {
+        // MODE EN LIGNE : Envoyer à Firebase
+        try {
+          if (!FirebaseService.isInitialized()) {
+            await FirebaseService.initialize()
+          }
+          
+          const firebaseResult = await FirebaseService.saveReport(payload)
+          console.log('Report saved to Firebase (online mode):', firebaseResult)
+          
           setSubmitted(true)
           setFormData({
             title: '',
@@ -138,21 +134,68 @@ const ReportPage: React.FC = () => {
             longitude: formData.longitude,
           })
           setTimeout(() => setSubmitted(false), 3000)
-        } else {
-          setError(data.error || 'Erreur du serveur (' + response.status + ')')
+        } catch (firebaseError: any) {
+          console.error('Firebase failed, falling back to local:', firebaseError)
+          setError('Erreur Firebase. Utilisation du mode local. ' + firebaseError.message)
+          // Fallback vers PostgreSQL si Firebase échoue
+          await submitToPostgreSQL(payload)
         }
-      } finally {
-        clearTimeout(timeoutId)
+      } else {
+        // MODE HORS LIGNE : Envoyer à PostgreSQL local
+        console.log('Offline mode: using local PostgreSQL')
+        await submitToPostgreSQL(payload)
       }
     } catch (err: any) {
-      if (err.name === 'AbortError') {
-        setError('Connexion timeout (10s). Le serveur est peut-être hors ligne.')
-      } else {
-        setError('Erreur: ' + err.message)
-      }
+      setError('Erreur: ' + err.message)
       console.error('Failed to submit report:', err)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const submitToPostgreSQL = async (payload: any) => {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 10000)
+
+    try {
+      const response = await fetch('/api/reports', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      })
+
+      clearTimeout(timeoutId)
+      console.log('Response status:', response.status)
+      const text = await response.text()
+      console.log('Response text:', text)
+
+      if (!text) {
+        throw new Error('Le serveur n\'a pas répondu. Vérifiez que le backend est lancé avec: yarn docker:up')
+      }
+
+      const data = JSON.parse(text)
+
+      if (response.ok) {
+        setSubmitted(true)
+        setFormData({
+          title: '',
+          description: '',
+          area_m2: '',
+          budget: '',
+          company: '',
+          status: 'new',
+          latitude: payload.latitude,
+          longitude: payload.longitude,
+        })
+        setTimeout(() => setSubmitted(false), 3000)
+      } else {
+        throw new Error(data.error || 'Erreur du serveur (' + response.status + ')')
+      }
+    } finally {
+      clearTimeout(timeoutId)
     }
   }
 
@@ -235,7 +278,7 @@ const ReportPage: React.FC = () => {
         <div style={{ marginTop: 16, padding: 12, backgroundColor: '#f3f4f6', borderRadius: 8, fontSize: 12, color: '#6b7280' }}>
           <strong>Notes:</strong>
           <ul>
-            <li>La position GPS est capturée automatiquement</li>
+            <li>Sélectionnez la position en cliquant sur la carte</li>
             <li>Le titre est obligatoire</li>
             <li>Les signalements sont publics et visibles sur la carte</li>
           </ul>

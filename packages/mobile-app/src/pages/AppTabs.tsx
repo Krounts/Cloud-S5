@@ -9,7 +9,7 @@ import {
 } from '@ionic/react'
 import { IonReactRouter } from '@ionic/react-router'
 import { Route, Redirect } from 'react-router-dom'
-import { map, add, person } from 'ionicons/icons'
+import { map, person } from 'ionicons/icons'
 
 import MapPage from './MapPage'
 import ReportPage from './ReportPage'
@@ -29,10 +29,6 @@ const AppTabs: React.FC = () => {
           <IonTabButton tab="map" href="/map">
             <IonIcon icon={map} />
             <IonLabel>Map</IonLabel>
-          </IonTabButton>
-          <IonTabButton tab="report" href="/report">
-            <IonIcon icon={add} />
-            <IonLabel>Report</IonLabel>
           </IonTabButton>
           <IonTabButton tab="profile" href="/profile">
             <IonIcon icon={person} />

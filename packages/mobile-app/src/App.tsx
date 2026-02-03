@@ -18,12 +18,15 @@ import '@ionic/react/css/display.css'
 import './theme/variables.css'
 
 import AppTabs from './pages/AppTabs'
+import { LocationProvider } from './context/LocationContext'
 
 setupIonicReact()
 
 const App: React.FC = () => (
   <IonApp>
-    <AppTabs />
+    <LocationProvider>
+      <AppTabs />
+    </LocationProvider>
   </IonApp>
 )
 

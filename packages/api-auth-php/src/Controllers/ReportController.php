@@ -2,6 +2,7 @@
 namespace App\Controllers;
 
 use App\Database;
+use App\Jwt;
 use App\Models\Report;
 
 class ReportController
@@ -72,6 +73,57 @@ class ReportController
 
         http_response_code(200);
         echo json_encode(['message' => 'Report updated successfully']);
+    }
+
+    public function updateAdmin(): void
+    {
+        $admin = Jwt::authenticate();
+        if (!$admin || !in_array($admin['role'] ?? 'user', ['admin', 'manager'])) {
+            http_response_code(403);
+            echo json_encode(['error' => 'Forbidden']);
+            return;
+        }
+
+        $input = json_decode(file_get_contents('php://input'), true) ?? [];
+        $id = (int)($input['id'] ?? 0);
+        if ($id <= 0) {
+            http_response_code(400);
+            echo json_encode(['error' => 'Invalid report id']);
+            return;
+        }
+
+        $fields = [];
+        if (array_key_exists('title', $input)) $fields['title'] = trim((string)$input['title']);
+        if (array_key_exists('description', $input)) $fields['description'] = trim((string)$input['description']);
+        if (array_key_exists('area_m2', $input)) $fields['area_m2'] = (float)$input['area_m2'];
+        if (array_key_exists('budget', $input)) $fields['budget'] = (float)$input['budget'];
+        if (array_key_exists('company', $input)) $fields['company'] = trim((string)$input['company']);
+        if (array_key_exists('status', $input)) {
+            $status = trim((string)$input['status']);
+            if (!in_array($status, ['new', 'in_progress', 'completed', 'closed'])) {
+                http_response_code(400);
+                echo json_encode(['error' => 'Invalid status']);
+                return;
+            }
+            $fields['status'] = $status;
+        }
+
+        if (empty($fields)) {
+            http_response_code(400);
+            echo json_encode(['error' => 'No fields to update']);
+            return;
+        }
+
+        $db = Database::getConnection();
+        $ok = Report::updateFields($db, $id, $fields);
+        if (!$ok) {
+            http_response_code(400);
+            echo json_encode(['error' => 'Update failed']);
+            return;
+        }
+        $report = Report::findById($db, $id);
+        http_response_code(200);
+        echo json_encode(['message' => 'Report updated successfully', 'report' => $report]);
     }
 
     public function getStatistics(): void

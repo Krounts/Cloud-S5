@@ -5,6 +5,17 @@ use PDO;
 
 class User
 {
+    public static function findAll(PDO $db, ?bool $locked = null): array
+    {
+        if ($locked === null) {
+            $stmt = $db->prepare('SELECT id, email, first_name, last_name, role, is_locked, failed_login_attempts, created_at FROM users ORDER BY created_at DESC');
+            $stmt->execute();
+        } else {
+            $stmt = $db->prepare('SELECT id, email, first_name, last_name, role, is_locked, failed_login_attempts, created_at FROM users WHERE is_locked = :locked ORDER BY created_at DESC');
+            $stmt->execute(['locked' => $locked]);
+        }
+        return $stmt->fetchAll();
+    }
     public static function findByEmail(PDO $db, string $email): ?array
     {
         $stmt = $db->prepare('SELECT * FROM users WHERE email = :email');

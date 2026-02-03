@@ -56,7 +56,7 @@ CREATE INDEX idx_sessions_token ON sessions(token);
 INSERT INTO users (email, password_hash, first_name, last_name, role, created_at)
 VALUES (
   'manager@cloud-s5.local',
-  '$2a$10$YIjlrFWKd1KhVmhKJnJtaex7hEK8DFfG8DfG8DfG8DfG8DfG8Df', -- bcrypt hash of 'manager123' (change this!)
+  '$2y$10$ktqRgL.b8yWkVzT//RLdT.1Eu3QmH.FHKklNz/YdNIdTBC3wK.q.m', -- bcrypt hash of 'manager123'
   'Manager',
   'Default',
   'manager',

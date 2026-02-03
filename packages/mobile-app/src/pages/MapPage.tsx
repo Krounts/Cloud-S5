@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useState, useRef } from 'react'
-import { IonPage, IonHeader, IonToolbar, IonTitle, IonContent, IonCard, IonCardContent, IonGrid, IonRow, IonCol, IonText, IonButton, IonProgressBar, IonButtons } from '@ionic/react'
-import { MapContainer, Marker, Popup, useMap } from 'react-leaflet'
+import { IonPage, IonHeader, IonToolbar, IonTitle, IonContent, IonCard, IonCardContent, IonGrid, IonRow, IonCol, IonText, IonButton, IonProgressBar, IonButtons, IonFooter, useIonRouter } from '@ionic/react'
+import { MapContainer, Marker, Popup, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { OfflineTileLayer } from '../components/OfflineTileLayer'
 import { offlineMapService } from '../services/OfflineMapService'
+import { useLocationContext } from '../context/LocationContext'
 
 // Fix for default markers
 // @ts-ignore
@@ -37,6 +38,16 @@ const MapResizer: React.FC = () => {
   return null
 }
 
+// Composant pour détecter les clics sur la carte
+const MapClickHandler: React.FC<{ onLocationSelected: (lat: number, lng: number) => void }> = ({ onLocationSelected }) => {
+  useMapEvents({
+    click: (e) => {
+      onLocationSelected(e.latlng.lat, e.latlng.lng)
+    },
+  })
+  return null
+}
+
 const normalizeReports = (raw: any[]): any[] => {
   if (!Array.isArray(raw)) return []
   return raw
@@ -61,12 +72,15 @@ const normalizeReports = (raw: any[]): any[] => {
 }
 
 const MapPage: React.FC = () => {
+  const router = useIonRouter()
+  const { setSelectedLocation } = useLocationContext()
   const [reports, setReports] = useState<any[]>(fallbackReports)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [downloading, setDownloading] = useState(false)
   const [downloadProgress, setDownloadProgress] = useState(0)
   const [cacheSize, setCacheSize] = useState(0)
+  const [tempLocation, setTempLocation] = useState<{ lat: number; lng: number } | null>(null)
 
   useEffect(() => {
     // Charger la taille du cache
@@ -84,7 +98,7 @@ const MapPage: React.FC = () => {
         const payload = await resp.json().catch(() => [])
         const raw = Array.isArray(payload) ? payload : (payload as any)?.reports ?? (payload as any)?.data ?? []
         const normalized = normalizeReports(raw)
-        if (!resp.ok || normalized.length === 0) throw new Error('API indisponible')
+        if (!resp.ok) throw new Error('API indisponible')
         setReports(normalized)
       } catch (e: any) {
         setError("Données API indisponibles : affichage d'exemples.")
@@ -159,6 +173,18 @@ const MapPage: React.FC = () => {
     }
   }
 
+  const handleLocationSelected = (lat: number, lng: number) => {
+    setTempLocation({ lat, lng })
+  }
+
+  const handleReportClick = (lat: number, lng: number) => {
+    const location = { lat, lng }
+    setSelectedLocation(location)
+    sessionStorage.setItem('reportLocation', JSON.stringify(location))
+    setTempLocation(null)
+    router.push(`/report?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}`, 'forward', 'push')
+  }
+
   return (
     <IonPage>
       <IonHeader>
@@ -210,6 +236,7 @@ const MapPage: React.FC = () => {
               scrollWheelZoom={true}
             >
               <MapResizer />
+              <MapClickHandler onLocationSelected={handleLocationSelected} />
               <OfflineTileLayer 
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                 attribution="&copy; OpenStreetMap contributors"
@@ -227,6 +254,23 @@ const MapPage: React.FC = () => {
                   </Popup>
                 </Marker>
               ))}
+              {tempLocation && (
+                <Marker position={[tempLocation.lat, tempLocation.lng]}>
+                  <Popup>
+                    <div style={{ minWidth: 200 }}>
+                      <div style={{ marginBottom: 8 }}>Cliquez sur le bouton ci-dessous pour signaler</div>
+                      <IonButton
+                        expand="block"
+                        size="small"
+                        color="success"
+                        onClick={() => handleReportClick(tempLocation.lat, tempLocation.lng)}
+                      >
+                        🚨 Signaler ici
+                      </IonButton>
+                    </div>
+                  </Popup>
+                </Marker>
+              )}
             </MapContainer>
           )}
         </div>

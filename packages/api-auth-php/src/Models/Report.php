@@ -67,6 +67,22 @@ class Report
         return $stmt->execute(['status' => $status, 'id' => $id]);
     }
 
+    public static function updateFields(PDO $db, int $id, array $fields): bool
+    {
+        if (empty($fields)) {
+            return false;
+        }
+        $sets = [];
+        $params = ['id' => $id];
+        foreach ($fields as $key => $value) {
+            $sets[] = "$key = :$key";
+            $params[$key] = $value;
+        }
+        $sql = 'UPDATE reports SET ' . implode(', ', $sets) . ', updated_at = NOW() WHERE id = :id';
+        $stmt = $db->prepare($sql);
+        return $stmt->execute($params);
+    }
+
     public static function delete(PDO $db, int $id): bool
     {
         $stmt = $db->prepare('DELETE FROM reports WHERE id = :id');
