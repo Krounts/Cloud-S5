@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { MapContainer, TileLayer, Marker, Tooltip } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import './App.css'
@@ -83,6 +83,7 @@ const normalizeReports = (raw) => {
 
       return {
         id: item.id ?? idx,
+        user_id: item.user_id ?? null,
         title: item.title ?? item.name ?? 'Signalement routier',
         description: item.description ?? '',
         latitude: lat,
@@ -91,7 +92,11 @@ const normalizeReports = (raw) => {
         area_m2: Number(item.area_m2 ?? item.area ?? 0),
         budget: Number(item.budget ?? 0),
         company: item.company ?? item.contractor ?? 'Non renseigné',
+        photos: Array.isArray(item.photos) ? item.photos : [],
         created_at: item.created_at ?? item.date ?? item.createdAt ?? new Date().toISOString(),
+        started_at: item.started_at ?? null,
+        completed_at: item.completed_at ?? null,
+        updated_at: item.updated_at ?? null,
       }
     })
     .filter(Boolean)
@@ -101,17 +106,16 @@ function App() {
   const [reports, setReports] = useState([])
   const [isLoading, setIsLoading] = useState(true)
   const [errorMsg, setErrorMsg] = useState('')
-  const [adminToken, setAdminToken] = useState(() => localStorage.getItem('adminToken') || '')
-  const [adminUser, setAdminUser] = useState(() => {
-    const raw = localStorage.getItem('adminUser')
-    return raw ? JSON.parse(raw) : null
-  })
-  const [adminTab, setAdminTab] = useState('reports')
+  // Ne pas charger automatiquement le token - forcer la connexion manuelle
+  const [adminToken, setAdminToken] = useState('')
+  const [adminUser, setAdminUser] = useState(null)
+  const [adminTab, setAdminTab] = useState('dashboard')
   const [adminLoading, setAdminLoading] = useState(false)
   const [adminError, setAdminError] = useState('')
   const [adminMessage, setAdminMessage] = useState('')
   const [users, setUsers] = useState([])
-  const [lockedOnly, setLockedOnly] = useState(true)
+  const [lockedOnly, setLockedOnly] = useState(false)
+  const [lightboxSrc, setLightboxSrc] = useState('')
   const [loginForm, setLoginForm] = useState({ email: '', password: '' })
   const [newUser, setNewUser] = useState({ email: '', password: '', firstName: '', lastName: '', role: 'user' })
 
@@ -295,12 +299,16 @@ function App() {
         company: report.company,
         status: report.status,
       }
+      console.log('Updating report:', payload)
+      console.log('Admin token:', adminToken ? 'present' : 'missing')
       const data = await adminFetch('/api/admin/reports/update', { method: 'POST', body: JSON.stringify(payload) })
+      console.log('Update response:', data)
       if (data?.report) {
         setReports((prev) => prev.map((r) => (r.id === data.report.id ? { ...r, ...data.report } : r)))
       }
-      setAdminMessage('Signalement mis à jour')
+      setAdminMessage('Signalement mis à jour avec succès ✓')
     } catch (err) {
+      console.error('Update error:', err)
       setAdminError(err.message || 'Erreur mise à jour signalement')
     } finally {
       setAdminLoading(false)
@@ -372,15 +380,49 @@ function App() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-slate-50">
-      <header className="bg-gradient-to-r from-blue-600 to-blue-800 text-white shadow-lg">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div>
-              <h1 className="text-4xl font-bold tracking-tight">🗺️ Carte publique des travaux routiers</h1>
-              <p className="text-blue-100 text-sm mt-1">Suivi en temps réel des signalements routiers à Antananarivo</p>
+      {/* Header amélioré */}
+      <header style={{
+        background: 'linear-gradient(135deg, #1e3a8a 0%, #3b82f6 50%, #0ea5e9 100%)',
+        color: 'white',
+        boxShadow: '0 4px 20px rgba(0,0,0,0.15)'
+      }}>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5">
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+              <div style={{ 
+                width: 56, 
+                height: 56, 
+                background: 'rgba(255,255,255,0.2)', 
+                borderRadius: 12, 
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'center',
+                fontSize: '1.8rem',
+                backdropFilter: 'blur(10px)'
+              }}>
+                🗺️
+              </div>
+              <div>
+                <h1 style={{ fontSize: '1.75rem', fontWeight: 700, margin: 0, letterSpacing: '-0.02em' }}>
+                  Travaux Routiers Antananarivo
+                </h1>
+                <p style={{ fontSize: '0.85rem', opacity: 0.85, margin: '4px 0 0 0' }}>
+                  Plateforme de suivi en temps réel des signalements
+                </p>
+              </div>
             </div>
-            <div className="text-xs text-blue-100 bg-blue-700 px-4 py-2 rounded-lg border border-blue-500 w-fit">
-              👤 Visiteurs • 📊 Données publiques
+            <div style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '0.75rem',
+              background: 'rgba(255,255,255,0.15)',
+              padding: '8px 16px',
+              borderRadius: 20,
+              backdropFilter: 'blur(10px)'
+            }}>
+              <span style={{ fontSize: '0.8rem' }}>👤 Visiteurs</span>
+              <span style={{ width: 1, height: 16, background: 'rgba(255,255,255,0.3)' }}></span>
+              <span style={{ fontSize: '0.8rem' }}>📊 Données publiques</span>
             </div>
           </div>
         </div>
@@ -394,65 +436,195 @@ function App() {
           </div>
         )}
 
-        <section className="bg-white rounded-xl shadow-lg p-6 border border-gray-100">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="text-2xl font-bold text-gray-900">🛡️ Module Admin</h2>
-              <p className="text-sm text-gray-600 mt-1">Connexion, utilisateurs, synchronisation, gestion des signalements</p>
+        {/* Module Admin amélioré */}
+        <section style={{
+          background: 'white',
+          borderRadius: 16,
+          boxShadow: '0 4px 20px rgba(0,0,0,0.08)',
+          overflow: 'hidden',
+          border: '1px solid #e5e7eb'
+        }}>
+          {/* En-tête du module admin */}
+          <div style={{
+            background: adminToken ? 'linear-gradient(135deg, #059669 0%, #10b981 100%)' : 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+            padding: '1.25rem 1.5rem',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '1rem'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <div style={{ 
+                width: 44, 
+                height: 44, 
+                background: 'rgba(255,255,255,0.2)', 
+                borderRadius: 10, 
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'center',
+                fontSize: '1.3rem'
+              }}>
+                {adminToken ? '✅' : '🔐'}
+              </div>
+              <div>
+                <h2 style={{ fontSize: '1.25rem', fontWeight: 700, color: 'white', margin: 0 }}>
+                  {adminToken ? 'Espace Manager' : 'Connexion Manager'}
+                </h2>
+                <p style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.85)', margin: '2px 0 0 0' }}>
+                  {adminToken ? 'Gérez les signalements et utilisateurs' : 'Accédez au tableau de bord administrateur'}
+                </p>
+              </div>
             </div>
             {adminUser && (
-              <div className="text-xs text-gray-600 bg-gray-100 px-3 py-2 rounded-full">
-                {adminUser.firstName} {adminUser.lastName} • {adminUser.role}
+              <div style={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: '0.5rem',
+                background: 'rgba(255,255,255,0.2)',
+                padding: '8px 14px',
+                borderRadius: 20,
+                color: 'white'
+              }}>
+                <span style={{ 
+                  width: 32, 
+                  height: 32, 
+                  background: 'rgba(255,255,255,0.3)', 
+                  borderRadius: '50%', 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center',
+                  fontSize: '0.9rem'
+                }}>
+                  👔
+                </span>
+                <div>
+                  <div style={{ fontSize: '0.85rem', fontWeight: 600 }}>{adminUser.firstName} {adminUser.lastName}</div>
+                  <div style={{ fontSize: '0.7rem', opacity: 0.85, textTransform: 'uppercase' }}>{adminUser.role}</div>
+                </div>
               </div>
             )}
           </div>
 
-          {adminError && (
-            <div className="bg-red-50 border-l-4 border-red-400 text-red-800 px-4 py-3 rounded-lg mb-4 text-sm">
-              {adminError}
-            </div>
-          )}
-          {adminMessage && (
-            <div className="bg-green-50 border-l-4 border-green-400 text-green-800 px-4 py-3 rounded-lg mb-4 text-sm">
-              {adminMessage}
-            </div>
-          )}
+          {/* Contenu du module admin */}
+          <div style={{ padding: '1.5rem' }}>
+            {adminError && (
+              <div style={{ 
+                background: '#fef2f2', 
+                borderLeft: '4px solid #ef4444', 
+                color: '#991b1b', 
+                padding: '12px 16px', 
+                borderRadius: 8, 
+                marginBottom: 16, 
+                fontSize: '0.9rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px'
+              }}>
+                ❌ {adminError}
+              </div>
+            )}
+            {adminMessage && (
+              <div style={{ 
+                background: '#f0fdf4', 
+                borderLeft: '4px solid #22c55e', 
+                color: '#166534', 
+                padding: '12px 16px', 
+                borderRadius: 8, 
+                marginBottom: 16, 
+                fontSize: '0.9rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px'
+              }}>
+                ✅ {adminMessage}
+              </div>
+            )}
 
           {!adminToken ? (
-            <form onSubmit={handleAdminLogin} className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <input
-                className="border rounded-lg px-3 py-2"
-                type="email"
-                placeholder="Email admin"
-                value={loginForm.email}
-                onChange={(e) => setLoginForm((p) => ({ ...p, email: e.target.value }))}
-                required
-              />
-              <input
-                className="border rounded-lg px-3 py-2"
-                type="password"
-                placeholder="Mot de passe"
-                value={loginForm.password}
-                onChange={(e) => setLoginForm((p) => ({ ...p, password: e.target.value }))}
-                required
-              />
-              <button
-                className="bg-blue-600 text-white rounded-lg px-4 py-2 font-semibold hover:bg-blue-700"
-                type="submit"
-                disabled={adminLoading}
-              >
-                {adminLoading ? 'Connexion...' : 'Se connecter'}
-              </button>
+            <form onSubmit={handleAdminLogin} style={{ maxWidth: 500, margin: '0 auto' }}>
+              <div style={{ 
+                background: '#f8fafc', 
+                padding: '2rem', 
+                borderRadius: 12, 
+                border: '1px solid #e2e8f0' 
+              }}>
+                <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
+                  <div style={{ fontSize: '3rem', marginBottom: '0.5rem' }}>🔑</div>
+                  <p style={{ color: '#64748b', fontSize: '0.9rem' }}>Entrez vos identifiants pour accéder au tableau de bord</p>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 500, color: '#374151', marginBottom: 6 }}>
+                      📧 Email
+                    </label>
+                    <input
+                      style={{ 
+                        width: '100%', 
+                        padding: '12px 14px', 
+                        border: '1px solid #d1d5db', 
+                        borderRadius: 8, 
+                        fontSize: '1rem',
+                        boxSizing: 'border-box'
+                      }}
+                      type="email"
+                      placeholder="manager@example.com"
+                      value={loginForm.email}
+                      onChange={(e) => setLoginForm((p) => ({ ...p, email: e.target.value }))}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 500, color: '#374151', marginBottom: 6 }}>
+                      🔒 Mot de passe
+                    </label>
+                    <input
+                      style={{ 
+                        width: '100%', 
+                        padding: '12px 14px', 
+                        border: '1px solid #d1d5db', 
+                        borderRadius: 8, 
+                        fontSize: '1rem',
+                        boxSizing: 'border-box'
+                      }}
+                      type="password"
+                      placeholder="••••••••"
+                      value={loginForm.password}
+                      onChange={(e) => setLoginForm((p) => ({ ...p, password: e.target.value }))}
+                      required
+                    />
+                  </div>
+                  <button
+                    style={{ 
+                      width: '100%',
+                      padding: '14px',
+                      background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: 8,
+                      fontSize: '1rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      marginTop: '0.5rem'
+                    }}
+                    type="submit"
+                    disabled={adminLoading}
+                  >
+                    {adminLoading ? '⏳ Connexion...' : '🚀 Se connecter'}
+                  </button>
+                </div>
+              </div>
             </form>
           ) : (
             <div>
               <div className="admin-tabs">
-                {['reports', 'users', 'sync'].map((tab) => (
+                {['dashboard', 'reports', 'users', 'sync'].map((tab) => (
                   <button
                     key={tab}
                     onClick={() => setAdminTab(tab)}
                     className={`tab-button ${adminTab === tab ? 'active' : ''}`}
                   >
+                    {tab === 'dashboard' && '📊 Tableau de bord'}
                     {tab === 'reports' && '📋 Signalements'}
                     {tab === 'users' && '👥 Utilisateurs'}
                     {tab === 'sync' && '🔄 Synchronisation'}
@@ -463,6 +635,253 @@ function App() {
                 </button>
               </div>
 
+              {adminTab === 'dashboard' && (
+                  <div className="section">
+                  <h3>📊 Tableau de bord - Suivi des travaux</h3>
+                  
+                  {/* Statistiques globales */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem', marginBottom: '2rem', alignItems: 'stretch' }}>
+                    {/* Card 1 - Nouveaux */}
+                    <div style={{
+                      padding: '1rem 1.25rem',
+                      borderRadius: 14,
+                      background: 'linear-gradient(135deg, #fff7ed 0%, #fef3c7 100%)',
+                      boxShadow: '0 8px 20px rgba(14, 30, 37, 0.06)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      justifyContent: 'space-between'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <div style={{ width: 44, height: 44, borderRadius: 10, background: 'rgba(217, 119, 6, 0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20 }}>
+                          🆕
+                        </div>
+                        <div style={{ fontSize: 13, color: '#92400e', fontWeight: 700 }}>Nouveaux</div>
+                      </div>
+                      <div style={{ marginTop: 12, display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+                        <div style={{ fontSize: 28, fontWeight: 800, color: '#b45309' }}>{reports.filter(r => r.status === 'new').length}</div>
+                        <div style={{ fontSize: 12, color: '#7c2d12' }}>({Math.round((reports.filter(r=>r.status==='new').length / Math.max(1, reports.length)) * 100)}%)</div>
+                      </div>
+                    </div>
+
+                    {/* Card 2 - En cours */}
+                    <div style={{
+                      padding: '1rem 1.25rem',
+                      borderRadius: 14,
+                      background: 'linear-gradient(135deg, #eef2ff 0%, #dbeafe 100%)',
+                      boxShadow: '0 8px 20px rgba(20, 40, 80, 0.06)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      justifyContent: 'space-between'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <div style={{ width: 44, height: 44, borderRadius: 10, background: 'rgba(59,130,246,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20 }}>
+                          🔧
+                        </div>
+                        <div style={{ fontSize: 13, color: '#1e40af', fontWeight: 700 }}>En cours</div>
+                      </div>
+                      <div style={{ marginTop: 12, display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+                        <div style={{ fontSize: 28, fontWeight: 800, color: '#1d4ed8' }}>{reports.filter(r => r.status === 'in_progress').length}</div>
+                        <div style={{ fontSize: 12, color: '#334155' }}>{Math.round((reports.filter(r=>r.status==='in_progress').length / Math.max(1, reports.length)) * 100)}%</div>
+                      </div>
+                    </div>
+
+                    {/* Card 3 - Terminés */}
+                    <div style={{
+                      padding: '1rem 1.25rem',
+                      borderRadius: 14,
+                      background: 'linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)',
+                      boxShadow: '0 8px 20px rgba(6, 95, 70, 0.04)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      justifyContent: 'space-between'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <div style={{ width: 44, height: 44, borderRadius: 10, background: 'rgba(16,185,129,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20 }}>
+                          ✅
+                        </div>
+                        <div style={{ fontSize: 13, color: '#065f46', fontWeight: 700 }}>Terminés</div>
+                      </div>
+                      <div style={{ marginTop: 12, display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+                        <div style={{ fontSize: 28, fontWeight: 800, color: '#059669' }}>{reports.filter(r => r.status === 'completed' || r.status === 'closed').length}</div>
+                        <div style={{ fontSize: 12, color: '#065f46' }}>{Math.round((reports.filter(r=>r.status==='completed' || r.status==='closed').length / Math.max(1, reports.length)) * 100)}%</div>
+                      </div>
+                    </div>
+
+                    {/* Card 4 - Délai moyen */}
+                    <div style={{
+                      padding: '1rem 1.25rem',
+                      borderRadius: 14,
+                      background: 'linear-gradient(135deg, #f5f3ff 0%, #f3e8ff 100%)',
+                      boxShadow: '0 8px 20px rgba(92, 16, 153, 0.04)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      justifyContent: 'space-between'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <div style={{ width: 44, height: 44, borderRadius: 10, background: 'rgba(124,58,237,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20 }}>
+                          ⏱️
+                        </div>
+                        <div style={{ fontSize: 13, color: '#5b21b6', fontWeight: 700 }}>Délai moyen</div>
+                      </div>
+                        <div style={{ marginTop: 12, display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+                          <div style={{ fontSize: 22, fontWeight: 800, color: '#6d28d9' }}>{(() => {
+                            const completed = reports.filter(r => r.completed_at && r.created_at)
+                            if (completed.length === 0) return '—'
+                            const totalDays = completed.reduce((sum, r) => {
+                              const start = new Date(r.created_at)
+                              const end = new Date(r.completed_at)
+                              return sum + Math.ceil((end - start) / (1000 * 60 * 60 * 24))
+                            }, 0)
+                            return Math.round(totalDays / completed.length) + ' j'
+                          })()}</div>
+                          <div style={{ fontSize: 12, color: '#6b21a8' }}>&nbsp;</div>
+                        </div>
+                    </div>
+
+                      {/* Card 5 - Avancement global */}
+                      <div style={{
+                        padding: '1rem 1.25rem',
+                        borderRadius: 14,
+                        background: 'linear-gradient(135deg, #f8fafc 0%, #eef2ff 100%)',
+                        boxShadow: '0 8px 20px rgba(14, 30, 60, 0.04)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        justifyContent: 'space-between'
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                          <div style={{ width: 44, height: 44, borderRadius: 10, background: 'rgba(59,130,246,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20 }}>
+                            📈
+                          </div>
+                          <div style={{ fontSize: 13, color: '#0f172a', fontWeight: 700 }}>Avancement global</div>
+                        </div>
+                        <div style={{ marginTop: 12 }}>
+                          <div style={{ height: 10, background: '#eef2ff', borderRadius: 999, overflow: 'hidden' }}>
+                            <div style={{ width: `${summary.progressPercent}%`, height: '100%', background: 'linear-gradient(90deg,#06b6d4,#3b82f6)' }} />
+                          </div>
+                          <div style={{ marginTop: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div style={{ fontSize: 22, fontWeight: 800, color: '#0b5fa5' }}>{summary.progressPercent}%</div>
+                            <div style={{ fontSize: 12, color: '#64748b' }}>{reports.length} signalement(s)</div>
+                          </div>
+                        </div>
+                      </div>
+                  </div>
+
+                  {/* Tableau récapitulatif */}
+                  <div style={{ overflowX: 'auto' }}>
+                    <table className="users-table" style={{ width: '100%' }}>
+                      <thead>
+                        <tr>
+                          <th>ID</th>
+                          <th>Titre</th>
+                          <th>Avancement</th>
+                          <th>Créé le</th>
+                          <th>Démarré le</th>
+                          <th>Terminé le</th>
+                          <th>Délai</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {reports.length === 0 ? (
+                          <tr>
+                            <td colSpan="7" style={{ textAlign: 'center', color: '#6b7280', padding: '2rem' }}>
+                              Aucun signalement
+                            </td>
+                          </tr>
+                        ) : (
+                          reports.map((report) => {
+                            const progress = report.status === 'new' ? 0 : report.status === 'in_progress' ? 50 : 100
+                            const progressColor = progress === 0 ? '#f59e0b' : progress === 50 ? '#3b82f6' : '#10b981'
+                            
+                            // Calculer le délai
+                            let delai = '—'
+                            if (report.completed_at && report.created_at) {
+                              const days = Math.ceil((new Date(report.completed_at) - new Date(report.created_at)) / (1000 * 60 * 60 * 24))
+                              delai = `${days} jour${days > 1 ? 's' : ''}`
+                            } else if (report.created_at) {
+                              const days = Math.ceil((new Date() - new Date(report.created_at)) / (1000 * 60 * 60 * 24))
+                              delai = `${days}j (en cours)`
+                            }
+                            
+                            return (
+                              <tr key={report.id}>
+                                <td><strong>#{report.id}</strong></td>
+                                <td style={{ maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {report.title}
+                                </td>
+                                <td style={{ minWidth: '150px' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <div style={{ 
+                                      flex: 1, 
+                                      height: '8px', 
+                                      backgroundColor: '#e5e7eb', 
+                                      borderRadius: '4px',
+                                      overflow: 'hidden'
+                                    }}>
+                                      <div style={{ 
+                                        width: `${progress}%`, 
+                                        height: '100%', 
+                                        backgroundColor: progressColor,
+                                        borderRadius: '4px',
+                                        transition: 'width 0.3s ease'
+                                      }} />
+                                    </div>
+                                    <span style={{ 
+                                      fontSize: '0.85rem', 
+                                      fontWeight: 600, 
+                                      color: progressColor,
+                                      minWidth: '40px'
+                                    }}>
+                                      {progress}%
+                                    </span>
+                                  </div>
+                                  <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '2px' }}>
+                                    {report.status === 'new' && '🆕 Nouveau'}
+                                    {report.status === 'in_progress' && '🔧 En cours'}
+                                    {report.status === 'completed' && '✅ Terminé'}
+                                    {report.status === 'closed' && '🔒 Clos'}
+                                  </div>
+                                </td>
+                                <td style={{ fontSize: '0.85rem' }}>
+                                  {report.created_at ? new Date(report.created_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
+                                </td>
+                                <td style={{ fontSize: '0.85rem' }}>
+                                  {report.started_at ? (
+                                    <span style={{ color: '#2563eb' }}>
+                                      {new Date(report.started_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })}
+                                    </span>
+                                  ) : (
+                                    <span style={{ color: '#9ca3af' }}>—</span>
+                                  )}
+                                </td>
+                                <td style={{ fontSize: '0.85rem' }}>
+                                  {report.completed_at ? (
+                                    <span style={{ color: '#059669' }}>
+                                      {new Date(report.completed_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })}
+                                    </span>
+                                  ) : (
+                                    <span style={{ color: '#9ca3af' }}>—</span>
+                                  )}
+                                </td>
+                                <td style={{ fontSize: '0.85rem', fontWeight: 500 }}>
+                                  <span style={{ 
+                                    color: report.completed_at ? '#059669' : '#f59e0b',
+                                    backgroundColor: report.completed_at ? '#d1fae5' : '#fef3c7',
+                                    padding: '2px 8px',
+                                    borderRadius: '4px'
+                                  }}>
+                                    {delai}
+                                  </span>
+                                </td>
+                              </tr>
+                            )
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
               {adminTab === 'reports' && (
                 <div className="section">
                   <h3>📋 Gestion des signalements</h3>
@@ -471,6 +890,19 @@ function App() {
                   ) : (
                     reports.map((report) => (
                       <div key={report.id} className="report-edit-card">
+                        <div className="report-edit-card-header">
+                          <div className="header-left">
+                            <div className="report-id">#{report.id}</div>
+                            <div className="report-meta">
+                              <div className="report-title">{report.title || 'Signalement'}</div>
+                              <div className="report-sub">{report.company || 'Entreprise non renseignée'} • {formatDate(report.created_at)}</div>
+                            </div>
+                          </div>
+                          <div className="header-right">
+                            <span className={`status-badge status-${report.status}`}>{statusLabels[report.status] ?? report.status}</span>
+                          </div>
+                        </div>
+
                         <div className="report-edit-grid">
                           <div className="form-group" style={{gridColumn: '1 / -1'}}>
                             <label>Titre</label>
@@ -528,14 +960,19 @@ function App() {
                               <option value="closed">Clos</option>
                             </select>
                           </div>
-                          <button
-                            className="button-primary"
-                            onClick={() => handleUpdateReport(report)}
-                            disabled={adminLoading}
-                            style={{height: 'fit-content'}}
-                          >
-                            ✓ Mettre à jour
-                          </button>
+                        </div>
+
+                        <div className="report-edit-footer">
+                          <div className="footer-left" />
+                          <div className="footer-right">
+                            <button
+                              className="button-primary"
+                              onClick={() => handleUpdateReport(report)}
+                              disabled={adminLoading}
+                            >
+                              ✓ Mettre à jour
+                            </button>
+                          </div>
                         </div>
                       </div>
                     ))
@@ -547,7 +984,7 @@ function App() {
                 <div className="section">
                   <h3>👥 Gestion des utilisateurs</h3>
                   
-                  <form onSubmit={handleCreateUser} className="create-user-form">
+                  <form onSubmit={handleCreateUser} className="create-user-form" autoComplete="off">
                     <div style={{display: 'flex', alignItems: 'center', marginBottom: '1rem', gap: '0.5rem'}}>
                       <span style={{fontWeight: 600, color: 'var(--primary)'}}>➕ Créer un nouvel utilisateur</span>
                     </div>
@@ -560,6 +997,7 @@ function App() {
                           value={newUser.email} 
                           onChange={(e) => setNewUser((p) => ({ ...p, email: e.target.value }))} 
                           required 
+                          autoComplete="new-email"
                         />
                       </div>
                       <div className="form-group">
@@ -570,6 +1008,7 @@ function App() {
                           value={newUser.password} 
                           onChange={(e) => setNewUser((p) => ({ ...p, password: e.target.value }))} 
                           required 
+                          autoComplete="new-password"
                         />
                       </div>
                       <div className="form-group">
@@ -580,6 +1019,7 @@ function App() {
                           value={newUser.firstName} 
                           onChange={(e) => setNewUser((p) => ({ ...p, firstName: e.target.value }))} 
                           required 
+                          autoComplete="off"
                         />
                       </div>
                       <div className="form-group">
@@ -590,6 +1030,7 @@ function App() {
                           value={newUser.lastName} 
                           onChange={(e) => setNewUser((p) => ({ ...p, lastName: e.target.value }))} 
                           required 
+                          autoComplete="off"
                         />
                       </div>
                       <div className="form-group">
@@ -630,6 +1071,7 @@ function App() {
                         <th>Email</th>
                         <th>Nom</th>
                         <th>Rôle</th>
+                        <th>Tentatives</th>
                         <th>Statut</th>
                         <th>Action</th>
                       </tr>
@@ -637,7 +1079,7 @@ function App() {
                     <tbody>
                       {users.length === 0 ? (
                         <tr>
-                          <td colSpan="5" style={{textAlign: 'center', color: 'var(--gray-500)'}}>
+                          <td colSpan="6" style={{textAlign: 'center', color: 'var(--gray-500)'}}>
                             Aucun utilisateur
                           </td>
                         </tr>
@@ -647,8 +1089,24 @@ function App() {
                             <td><strong>{u.email}</strong></td>
                             <td>{u.first_name} {u.last_name}</td>
                             <td>
-                              <span style={{fontSize: '0.85rem', fontWeight: 600, textTransform: 'uppercase', color: 'var(--primary)'}}>
-                                {u.role}
+                              <span style={{
+                                fontSize: '0.85rem', 
+                                fontWeight: 600, 
+                                textTransform: 'uppercase', 
+                                color: u.role === 'manager' ? '#2563eb' : u.role === 'admin' ? '#dc2626' : 'var(--primary)',
+                                backgroundColor: u.role === 'manager' ? '#dbeafe' : u.role === 'admin' ? '#fee2e2' : '#f3f4f6',
+                                padding: '2px 8px',
+                                borderRadius: '4px'
+                              }}>
+                                {u.role === 'manager' ? '👔 ' : u.role === 'admin' ? '👑 ' : '👤 '}{u.role}
+                              </span>
+                            </td>
+                            <td>
+                              <span style={{
+                                fontWeight: u.failed_login_attempts > 0 ? 600 : 400,
+                                color: u.failed_login_attempts >= 3 ? '#dc2626' : u.failed_login_attempts > 0 ? '#f59e0b' : '#6b7280'
+                              }}>
+                                {u.failed_login_attempts || 0} / 3
                               </span>
                             </td>
                             <td>
@@ -657,7 +1115,7 @@ function App() {
                               </span>
                             </td>
                             <td>
-                              {u.is_locked && (
+                              {u.is_locked ? (
                                 <button 
                                   className="button-danger"
                                   onClick={() => handleUnlockUser(u.id)}
@@ -665,6 +1123,8 @@ function App() {
                                 >
                                   🔓 Débloquer
                                 </button>
+                              ) : (
+                                <span style={{color: '#9ca3af', fontSize: '0.85rem'}}>—</span>
                               )}
                             </td>
                           </tr>
@@ -713,6 +1173,7 @@ function App() {
               )}
             </div>
           )}
+          </div>
         </section>
 
         <section className="bg-white rounded-xl shadow-lg overflow-hidden" style={{ height: '540px' }}>
@@ -733,7 +1194,7 @@ function App() {
               />
               {reports.map((report) => (
                 <Marker key={report.id} position={[report.latitude, report.longitude]}>
-                  <Tooltip direction="top" offset={[0, -10]} opacity={0.98} permanent={false}>
+                  <Popup closeButton autoPan keepInView>
                     <div className="text-sm space-y-2">
                       <div className="font-bold text-gray-900">{report.title}</div>
                       <div className="flex items-center gap-2 text-xs">
@@ -747,13 +1208,52 @@ function App() {
                         <div>💰 Budget: {formatCurrency(report.budget)}</div>
                         <div>🏢 {report.company}</div>
                       </div>
+                      {Array.isArray(report.photos) && report.photos.length > 0 && (
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginTop: 6 }}>
+                          {report.photos.slice(0, 3).map((src, idx) => (
+                            <img
+                              key={`${report.id}-photo-${idx}`}
+                              src={src}
+                              alt={`photo-${idx + 1}`}
+                              style={{ width: '100%', height: 54, objectFit: 'cover', borderRadius: 6, border: '1px solid #e5e7eb', cursor: 'pointer' }}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setLightboxSrc(src)
+                              }}
+                            />
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  </Tooltip>
+                  </Popup>
                 </Marker>
               ))}
             </MapContainer>
           )}
         </section>
+
+        {lightboxSrc && (
+          <div
+            onClick={() => setLightboxSrc('')}
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(0, 0, 0, 0.7)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 9999,
+              padding: 24,
+            }}
+          >
+            <img
+              src={lightboxSrc}
+              alt="Agrandissement"
+              style={{ maxWidth: '90vw', maxHeight: '90vh', borderRadius: 12, boxShadow: '0 12px 30px rgba(0,0,0,0.35)' }}
+              onClick={(e) => e.stopPropagation()}
+            />
+          </div>
+        )}
 
         <footer className="text-center text-sm text-gray-600 py-6 border-t border-gray-200 mt-8">
           <p>Cloud S5 - Système de signalement routier pour Antananarivo © 2026</p>

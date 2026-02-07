@@ -30,6 +30,7 @@ export interface ReportData {
   area_m2?: number;
   budget?: number;
   company?: string;
+  photos?: string[];
   createdAt?: string;
   syncedToFirebase?: boolean;
 }
@@ -81,6 +82,7 @@ class FirebaseService {
           area_m2: parseFloat(data.area_m2 || data.area || 0),
           budget: parseFloat(data.budget || 0),
           company: data.company || 'Non renseigné',
+          photos: Array.isArray(data.photos) ? data.photos : [],
           createdAt: data.createdAt || new Date().toISOString(),
           syncedToFirebase: true,
         });
@@ -115,6 +117,7 @@ class FirebaseService {
         area_m2: report.area_m2 || 0,
         budget: report.budget || 0,
         company: report.company || 'Non renseigné',
+        photos: Array.isArray(report.photos) ? report.photos : [],
         createdAt: serverTimestamp(),
       };
 

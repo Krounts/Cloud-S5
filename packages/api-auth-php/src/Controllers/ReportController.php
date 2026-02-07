@@ -35,6 +35,10 @@ class ReportController
     {
         $input = json_decode(file_get_contents('php://input'), true) ?? [];
         
+        // Récupérer l'utilisateur connecté (optionnel)
+        $user = Jwt::authenticate();
+        $userId = $user ? (int)$user['id'] : 1; // user_id 1 = anonyme par défaut
+        
         $title = trim($input['title'] ?? '');
         $description = trim($input['description'] ?? '');
         $latitude = (float)($input['latitude'] ?? 0);
@@ -43,6 +47,10 @@ class ReportController
         $areaMm2 = (float)($input['area_m2'] ?? 0);
         $budget = (float)($input['budget'] ?? 0);
         $company = trim($input['company'] ?? '');
+        $photos = $input['photos'] ?? [];
+        if (!is_array($photos)) {
+            $photos = [];
+        }
 
         if (!$title || !$latitude || !$longitude) {
             http_response_code(400);
@@ -51,10 +59,10 @@ class ReportController
         }
 
         $db = Database::getConnection();
-        $report = Report::create($db, 1, $title, $description, $latitude, $longitude, $status, $areaMm2, $budget, $company);
+        $report = Report::create($db, $userId, $title, $description, $latitude, $longitude, $status, $areaMm2, $budget, $company, $photos);
 
         http_response_code(201);
-        echo json_encode(['message' => 'Report created successfully', 'report' => $report]);
+        echo json_encode(['message' => 'Report created successfully', 'report' => $report, 'user_id' => $userId]);
     }
 
     public function updateStatus(int $id): void

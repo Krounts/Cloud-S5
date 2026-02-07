@@ -20,6 +20,7 @@ class Routes
         $router->post('/api/admin/users', fn() => $auth->createUser());
         $router->post('/api/admin/sync-firebase', fn() => $auth->syncFirebase());
         $router->post('/api/admin/push-to-firebase', fn() => $auth->pushToFirebase());
+        $router->post('/api/admin/clear-firebase', fn() => $auth->clearFirebaseReports());
 
         // Report routes (public read, authenticated write)
         $router->get('/api/reports', fn() => $report->getAll());

@@ -9,24 +9,31 @@ class Report
     {
         $stmt = $db->prepare('
             SELECT id, user_id, title, description, latitude, longitude, status, 
-                   area_m2, budget, company, created_at 
+                   area_m2, budget, company, photos, created_at, started_at, completed_at, updated_at
             FROM reports 
             ORDER BY created_at DESC
         ');
         $stmt->execute();
-        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        return array_map(function ($row) {
+            $row['photos'] = isset($row['photos']) ? json_decode($row['photos'], true) ?? [] : [];
+            return $row;
+        }, $rows);
     }
 
     public static function findById(PDO $db, int $id): ?array
     {
         $stmt = $db->prepare('
             SELECT id, user_id, title, description, latitude, longitude, status, 
-                   area_m2, budget, company, created_at 
+                   area_m2, budget, company, photos, created_at, started_at, completed_at, updated_at
             FROM reports 
             WHERE id = :id
         ');
         $stmt->execute(['id' => $id]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row) {
+            $row['photos'] = isset($row['photos']) ? json_decode($row['photos'], true) ?? [] : [];
+        }
         return $row ?: null;
     }
 
@@ -40,12 +47,13 @@ class Report
         string $status,
         float $areaMm2,
         float $budget,
-        string $company
+        string $company,
+        array $photos
     ): array {
         $stmt = $db->prepare('
-            INSERT INTO reports (user_id, title, description, latitude, longitude, status, area_m2, budget, company, created_at)
-            VALUES (:user_id, :title, :description, :latitude, :longitude, :status, :area_m2, :budget, :company, NOW())
-            RETURNING id, user_id, title, description, latitude, longitude, status, area_m2, budget, company, created_at
+            INSERT INTO reports (user_id, title, description, latitude, longitude, status, area_m2, budget, company, photos, created_at)
+            VALUES (:user_id, :title, :description, :latitude, :longitude, :status, :area_m2, :budget, :company, :photos, NOW())
+            RETURNING id, user_id, title, description, latitude, longitude, status, area_m2, budget, company, photos, created_at, started_at, completed_at
         ');
         $stmt->execute([
             'user_id' => $userId,
@@ -57,13 +65,25 @@ class Report
             'area_m2' => $areaMm2,
             'budget' => $budget,
             'company' => $company,
+            'photos' => json_encode($photos),
         ]);
-        return $stmt->fetch(PDO::FETCH_ASSOC);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row) {
+            $row['photos'] = isset($row['photos']) ? json_decode($row['photos'], true) ?? [] : [];
+        }
+        return $row;
     }
 
     public static function updateStatus(PDO $db, int $id, string $status): bool
     {
-        $stmt = $db->prepare('UPDATE reports SET status = :status, updated_at = NOW() WHERE id = :id');
+        // Mettre à jour les dates selon le statut
+        $extraFields = '';
+        if ($status === 'in_progress') {
+            $extraFields = ', started_at = COALESCE(started_at, NOW())';
+        } elseif ($status === 'completed' || $status === 'closed') {
+            $extraFields = ', started_at = COALESCE(started_at, NOW()), completed_at = COALESCE(completed_at, NOW())';
+        }
+        $stmt = $db->prepare("UPDATE reports SET status = :status{$extraFields}, updated_at = NOW() WHERE id = :id");
         return $stmt->execute(['status' => $status, 'id' => $id]);
     }
 
@@ -72,13 +92,25 @@ class Report
         if (empty($fields)) {
             return false;
         }
+        
+        // Gérer les dates de progression selon le statut
+        $extraFields = '';
+        if (isset($fields['status'])) {
+            $status = $fields['status'];
+            if ($status === 'in_progress') {
+                $extraFields = ', started_at = COALESCE(started_at, NOW())';
+            } elseif ($status === 'completed' || $status === 'closed') {
+                $extraFields = ', started_at = COALESCE(started_at, NOW()), completed_at = COALESCE(completed_at, NOW())';
+            }
+        }
+        
         $sets = [];
         $params = ['id' => $id];
         foreach ($fields as $key => $value) {
             $sets[] = "$key = :$key";
-            $params[$key] = $value;
+            $params[$key] = $key === 'photos' ? json_encode($value) : $value;
         }
-        $sql = 'UPDATE reports SET ' . implode(', ', $sets) . ', updated_at = NOW() WHERE id = :id';
+        $sql = 'UPDATE reports SET ' . implode(', ', $sets) . $extraFields . ', updated_at = NOW() WHERE id = :id';
         $stmt = $db->prepare($sql);
         return $stmt->execute($params);
     }

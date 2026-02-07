@@ -1,11 +1,13 @@
-import React, { useEffect, useMemo, useState, useRef } from 'react'
-import { IonPage, IonHeader, IonToolbar, IonTitle, IonContent, IonCard, IonCardContent, IonGrid, IonRow, IonCol, IonText, IonButton, IonProgressBar, IonButtons, IonFooter, useIonRouter } from '@ionic/react'
+import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react'
+import { IonPage, IonHeader, IonToolbar, IonTitle, IonContent, IonCard, IonCardContent, IonGrid, IonRow, IonCol, IonText, IonButton, IonProgressBar, IonButtons, IonFooter, IonModal, IonList, IonItem, IonLabel, IonBadge, IonIcon, useIonRouter } from '@ionic/react'
 import { MapContainer, Marker, Popup, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { OfflineTileLayer } from '../components/OfflineTileLayer'
 import { offlineMapService } from '../services/OfflineMapService'
+import { notificationService, Notification } from '../services/NotificationService'
 import { useLocationContext } from '../context/LocationContext'
+import { notifications as notificationsIcon, checkmarkCircle, trash } from 'ionicons/icons'
 
 // Fix for default markers
 // @ts-ignore
@@ -57,6 +59,7 @@ const normalizeReports = (raw: any[]): any[] => {
       if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
       return {
         id: (item as any).id ?? idx,
+        user_id: (item as any).user_id ?? null,
         title: (item as any).title ?? (item as any).name ?? 'Signalement routier',
         description: (item as any).description ?? '',
         latitude: lat,
@@ -65,6 +68,7 @@ const normalizeReports = (raw: any[]): any[] => {
         area_m2: Number((item as any).area_m2 ?? (item as any).area ?? 0),
         budget: Number((item as any).budget ?? 0),
         company: (item as any).company ?? (item as any).contractor ?? 'Non renseigné',
+        photos: Array.isArray((item as any).photos) ? (item as any).photos : [],
         created_at: (item as any).created_at ?? (item as any).date ?? (item as any).createdAt ?? new Date().toISOString(),
       }
     })
@@ -81,11 +85,82 @@ const MapPage: React.FC = () => {
   const [downloadProgress, setDownloadProgress] = useState(0)
   const [cacheSize, setCacheSize] = useState(0)
   const [tempLocation, setTempLocation] = useState<{ lat: number; lng: number } | null>(null)
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null)
+  const [selectedReport, setSelectedReport] = useState<any>(null)
+  const [showPhotosModal, setShowPhotosModal] = useState(false)
+  
+  // État pour les notifications
+  const [notificationsList, setNotificationsList] = useState<Notification[]>([])
+  const [showNotifications, setShowNotifications] = useState(false)
+  const unreadCount = notificationsList.filter(n => !n.read).length
+  
+  // État pour filtrer "Mes signalements uniquement"
+  const [showMyReportsOnly, setShowMyReportsOnly] = useState(false)
+  
+  // Vérifier si l'utilisateur est connecté et récupérer son ID
+  const [isLoggedIn, setIsLoggedIn] = useState(false)
+  const [currentUserId, setCurrentUserId] = useState<number | null>(null)
+  
+  useEffect(() => {
+    const checkLogin = () => {
+      const token = localStorage.getItem('token')
+      console.log('Token found:', token ? 'yes' : 'no')
+      if (!token) {
+        setIsLoggedIn(false)
+        setCurrentUserId(null)
+        return
+      }
+      try {
+        const payload = JSON.parse(atob(token.split('.')[1]))
+        console.log('Token payload:', payload)
+        const userId = payload.user_id || payload.sub || payload.id || null
+        setCurrentUserId(userId)
+        setIsLoggedIn(userId !== null)
+      } catch (e) {
+        console.error('Token decode error:', e)
+        setIsLoggedIn(false)
+        setCurrentUserId(null)
+      }
+    }
+    checkLogin()
+    // Vérifier périodiquement (au cas où l'utilisateur se connecte/déconnecte)
+    const interval = setInterval(checkLogin, 2000)
+    return () => clearInterval(interval)
+  }, [])
+  
+  // Reports filtrés selon l'option "Mes signalements"
+  const filteredReports = useMemo(() => {
+    if (!showMyReportsOnly) return reports
+    if (!currentUserId) return reports
+    return reports.filter(r => r.user_id === currentUserId)
+  }, [reports, showMyReportsOnly])
+
+  // S'abonner aux changements de notifications
+  useEffect(() => {
+    setNotificationsList(notificationService.getNotifications())
+    const unsubscribe = notificationService.subscribe(setNotificationsList)
+    return unsubscribe
+  }, [])
+
+  // Exposer la fonction sur window pour que les popups Leaflet puissent l'appeler
+  useEffect(() => {
+    (window as any).openPhotosModal = (reportId: number) => {
+      const report = reports.find(r => r.id === reportId)
+      if (report) {
+        setSelectedReport(report)
+        setShowPhotosModal(true)
+      }
+    }
+    return () => {
+      delete (window as any).openPhotosModal
+    }
+  }, [reports])
 
   useEffect(() => {
     // Charger la taille du cache
     offlineMapService.getCacheSize().then(setCacheSize).catch(console.error)
   }, [])
+
 
   const loadReports = async () => {
     const controller = new AbortController()
@@ -94,11 +169,15 @@ const MapPage: React.FC = () => {
       try {
         setLoading(true)
         setError('')
-        const resp = await fetch('/api/reports', { signal: controller.signal })
+        const resp = await fetch('http://localhost:3001/api/reports', { signal: controller.signal })
         const payload = await resp.json().catch(() => [])
         const raw = Array.isArray(payload) ? payload : (payload as any)?.reports ?? (payload as any)?.data ?? []
         const normalized = normalizeReports(raw)
         if (!resp.ok) throw new Error('API indisponible')
+        
+        // Vérifier les changements de statut et créer des notifications
+        notificationService.checkForStatusChanges(normalized)
+        
         setReports(normalized)
       } catch (e: any) {
         setError("Données API indisponibles : affichage d'exemples.")
@@ -117,13 +196,14 @@ const MapPage: React.FC = () => {
   }, [])
 
   const summary = useMemo(() => {
-    const totalReports = reports.length
-    const totalArea = reports.reduce((s, r) => s + (Number((r as any).area_m2) || 0), 0)
-    const totalBudget = reports.reduce((s, r) => s + (Number((r as any).budget) || 0), 0)
-    const progressValue = reports.reduce((s, r) => s + (statusProgress[(r as any).status] ?? 0), 0)
+    const reportsToUse = showMyReportsOnly ? filteredReports : reports
+    const totalReports = reportsToUse.length
+    const totalArea = reportsToUse.reduce((s, r) => s + (Number((r as any).area_m2) || 0), 0)
+    const totalBudget = reportsToUse.reduce((s, r) => s + (Number((r as any).budget) || 0), 0)
+    const progressValue = reportsToUse.reduce((s, r) => s + (statusProgress[(r as any).status] ?? 0), 0)
     const progressPercent = totalReports ? Math.round(progressValue / totalReports) : 0
     return { totalReports, totalArea, totalBudget, progressPercent }
-  }, [reports])
+  }, [reports, filteredReports, showMyReportsOnly])
 
   const fmtDate = (v: any) => {
     const d = new Date(v)
@@ -185,45 +265,155 @@ const MapPage: React.FC = () => {
     router.push(`/report?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}`, 'forward', 'push')
   }
 
+  const openLightbox = (src: string) => {
+    setLightboxSrc(src)
+  }
+
   return (
     <IonPage>
       <IonHeader>
-        <IonToolbar>
-          <IonTitle>Carte des travaux</IonTitle>
-          <IonButtons slot="end">
-            <IonButton onClick={() => loadReports()} disabled={loading} size="small">
-              {loading ? 'Actualisation...' : '🔄'}
+        <IonToolbar style={{ 
+          '--background': 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+          '--color': 'white'
+        } as any}>
+          <IonButtons slot="start">
+            <IonButton 
+              onClick={() => {
+                console.log('Notification button clicked')
+                setShowNotifications(true)
+              }} 
+              style={{ position: 'relative', '--color': 'white' } as any}
+            >
+              <IonIcon icon={notificationsIcon} style={{ fontSize: 24 }} />
+              {unreadCount > 0 && (
+                <IonBadge 
+                  color="danger" 
+                  style={{ 
+                    position: 'absolute', 
+                    top: 0, 
+                    right: 0, 
+                    fontSize: 10, 
+                    minWidth: 18, 
+                    height: 18,
+                    borderRadius: 9
+                  }}
+                >
+                  {unreadCount}
+                </IonBadge>
+              )}
             </IonButton>
-            <IonButton onClick={handleDownloadMap} disabled={downloading} size="small">
-              {downloading ? 'Téléchargement...' : 'Télécharger'}
+          </IonButtons>
+          <IonTitle style={{ fontWeight: 700, letterSpacing: '0.5px' }}>🗺️ Carte des travaux</IonTitle>
+          <IonButtons slot="end">
+            <IonButton onClick={() => loadReports()} disabled={loading} size="small" style={{ '--color': 'white' } as any}>
+              {loading ? '...' : '🔄'}
+            </IonButton>
+            <IonButton onClick={handleDownloadMap} disabled={downloading} size="small" style={{ '--color': 'white' } as any}>
+              {downloading ? '...' : '📥'}
             </IonButton>
             {cacheSize > 0 && (
-              <IonButton onClick={handleClearCache} size="small" color="danger">
-                Effacer ({cacheSize})
+              <IonButton onClick={handleClearCache} size="small" style={{ '--color': '#fca5a5' } as any}>
+                🗑️
               </IonButton>
             )}
           </IonButtons>
         </IonToolbar>
-        {downloading && <IonProgressBar value={downloadProgress / 100} />}
+        {downloading && <IonProgressBar value={downloadProgress / 100} style={{ '--background': 'rgba(255,255,255,0.3)', '--progress-background': '#10b981' } as any} />}
       </IonHeader>
-      <IonContent fullscreen>
+      <IonContent fullscreen style={{ '--background': '#f1f5f9' } as any}>
         {error && (
-          <IonText color="warning"><p style={{ padding: 12 }}>{error}</p></IonText>
+          <IonText color="warning"><p style={{ padding: 12, margin: 0 }}>{error}</p></IonText>
         )}
-        <IonCard style={{ margin: 12 }}>
-          <IonCardContent>
-            <IonGrid>
-              <IonRow>
-                <IonCol size="6"><strong>Points</strong><div>{summary.totalReports}</div></IonCol>
-                <IonCol size="6"><strong>Avancement</strong><div>{summary.progressPercent}%</div></IonCol>
-              </IonRow>
-              <IonRow>
-                <IonCol size="6"><strong>Surface</strong><div>{fmtNum(summary.totalArea, ' m²')}</div></IonCol>
-                <IonCol size="6"><strong>Budget</strong><div>{fmtCur(summary.totalBudget)}</div></IonCol>
-              </IonRow>
-            </IonGrid>
-          </IonCardContent>
-        </IonCard>
+        
+        {/* Carte récapitulative stylée */}
+        <div style={{ 
+          margin: 12, 
+          background: 'white',
+          borderRadius: 16,
+          boxShadow: '0 4px 15px rgba(0,0,0,0.1)',
+          overflow: 'hidden'
+        }}>
+          <div style={{ 
+            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+            padding: '12px 16px',
+            color: 'white',
+            fontWeight: 600,
+            fontSize: 14,
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center'
+          }}>
+            <span>📊 {showMyReportsOnly ? 'Mes signalements' : 'Statistiques des travaux'}</span>
+            {/* Bouton filtre mes signalements - toujours visible */}
+            <button
+              onClick={() => {
+                if (!isLoggedIn) {
+                  alert('Connectez-vous sur la page Profil pour voir vos signalements')
+                  return
+                }
+                setShowMyReportsOnly(!showMyReportsOnly)
+              }}
+              style={{
+                background: showMyReportsOnly 
+                  ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)' 
+                  : 'rgba(255,255,255,0.2)',
+                border: 'none',
+                padding: '6px 12px',
+                borderRadius: 8,
+                color: 'white',
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 4,
+                backdropFilter: 'blur(10px)'
+              }}
+            >
+              {showMyReportsOnly ? '✓ Mes signalements' : '👤 Voir les miens'}
+            </button>
+          </div>
+          <div style={{ padding: 16 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div style={{ 
+                background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
+                padding: 12,
+                borderRadius: 12,
+                textAlign: 'center'
+              }}>
+                <div style={{ fontSize: 24, fontWeight: 700, color: '#16a34a' }}>{summary.totalReports}</div>
+                <div style={{ fontSize: 11, color: '#166534', fontWeight: 500, textTransform: 'uppercase' }}>Points</div>
+              </div>
+              <div style={{ 
+                background: 'linear-gradient(135deg, #ede9fe 0%, #ddd6fe 100%)',
+                padding: 12,
+                borderRadius: 12,
+                textAlign: 'center'
+              }}>
+                <div style={{ fontSize: 24, fontWeight: 700, color: '#7c3aed' }}>{summary.progressPercent}%</div>
+                <div style={{ fontSize: 11, color: '#5b21b6', fontWeight: 500, textTransform: 'uppercase' }}>Avancement</div>
+              </div>
+              <div style={{ 
+                background: 'linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)',
+                padding: 12,
+                borderRadius: 12,
+                textAlign: 'center'
+              }}>
+                <div style={{ fontSize: 16, fontWeight: 700, color: '#d97706' }}>{fmtNum(summary.totalArea)}</div>
+                <div style={{ fontSize: 11, color: '#92400e', fontWeight: 500, textTransform: 'uppercase' }}>Surface m²</div>
+              </div>
+              <div style={{ 
+                background: 'linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%)',
+                padding: 12,
+                borderRadius: 12,
+                textAlign: 'center'
+              }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: '#1d4ed8' }}>{fmtCur(summary.totalBudget)}</div>
+                <div style={{ fontSize: 11, color: '#1e40af', fontWeight: 500, textTransform: 'uppercase' }}>Budget</div>
+              </div>
+            </div>
+          </div>
+        </div>
 
         <div style={{ height: 'calc(100vh - 280px)', width: '100%', position: 'relative' }}>
           {loading ? (
@@ -234,6 +424,8 @@ const MapPage: React.FC = () => {
               zoom={13} 
               style={{ height: '100%', width: '100%' }}
               scrollWheelZoom={true}
+              tap={false}
+              closePopupOnClick={false}
             >
               <MapResizer />
               <MapClickHandler onLocationSelected={handleLocationSelected} />
@@ -241,15 +433,53 @@ const MapPage: React.FC = () => {
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                 attribution="&copy; OpenStreetMap contributors"
               />
-              {reports.map((r: any) => (
-                <Marker key={r.id} position={[r.latitude, r.longitude]}>
-                  <Popup>
-                    <div style={{ minWidth: 180 }}>
+              {filteredReports.map((r: any) => (
+                <Marker 
+                  key={r.id} 
+                  position={[r.latitude, r.longitude]}
+                  eventHandlers={{
+                    click: () => {
+                      // Quand on clique sur un marker, afficher ses infos et photos
+                      setSelectedReport(r)
+                    }
+                  }}
+                >
+                  <Popup autoClose={false} closeOnClick={false}>
+                    <div style={{ minWidth: 200, maxWidth: 280 }}>
                       <div style={{ fontWeight: 600, marginBottom: 4 }}>{r.title}</div>
                       <div style={{ fontSize: 12, color: '#374151', marginBottom: 6 }}>{statusLabels[r.status] ?? r.status} • {fmtDate(r.created_at)}</div>
                       <div style={{ fontSize: 13 }}>Surface: {fmtNum(r.area_m2, ' m²')}</div>
                       <div style={{ fontSize: 13 }}>Budget: {fmtCur(r.budget)}</div>
                       <div style={{ fontSize: 13 }}>Entreprise: {r.company}</div>
+                      {Array.isArray(r.photos) && r.photos.length > 0 && (
+                        <div style={{ marginTop: 10 }}>
+                          <div style={{ fontSize: 12, color: '#667eea', fontWeight: 600, marginBottom: 6 }}>
+                            📷 {r.photos.length} photo(s)
+                          </div>
+                          <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 4 }}>
+                            {r.photos.map((src: string, idx: number) => (
+                              <img
+                                key={idx}
+                                src={src}
+                                alt={`Photo ${idx + 1}`}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setLightboxSrc(src)
+                                }}
+                                style={{ 
+                                  height: 70, 
+                                  width: 70, 
+                                  objectFit: 'cover', 
+                                  borderRadius: 6, 
+                                  border: '2px solid #667eea',
+                                  cursor: 'pointer',
+                                  flexShrink: 0
+                                }}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </Popup>
                 </Marker>
@@ -275,6 +505,245 @@ const MapPage: React.FC = () => {
           )}
         </div>
       </IonContent>
+
+      {/* Lightbox plein écran pour agrandir une photo */}
+      {lightboxSrc && (
+        <div style={{ 
+          position: 'fixed', 
+          top: 0, 
+          left: 0, 
+          right: 0, 
+          bottom: 0, 
+          background: 'rgba(0,0,0,0.95)', 
+          zIndex: 99999,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center'
+        }}>
+          <button 
+            onClick={() => setLightboxSrc(null)}
+            style={{ 
+              position: 'absolute',
+              top: 20,
+              right: 20,
+              background: 'rgba(255,255,255,0.2)', 
+              border: 'none', 
+              padding: '12px 24px', 
+              borderRadius: 10, 
+              cursor: 'pointer', 
+              fontWeight: 600,
+              color: 'white',
+              fontSize: 16,
+              backdropFilter: 'blur(10px)',
+              zIndex: 100000
+            }}
+          >
+            ✕ Fermer
+          </button>
+          <img
+            src={lightboxSrc}
+            alt="Agrandissement"
+            style={{ 
+              maxWidth: '90%', 
+              maxHeight: '80%', 
+              borderRadius: 12, 
+              boxShadow: '0 10px 40px rgba(0,0,0,0.5)',
+              objectFit: 'contain'
+            }}
+          />
+        </div>
+      )}
+
+      {/* Panneau des notifications (plein écran) */}
+      {showNotifications && (
+        <div style={{ 
+          position: 'fixed', 
+          top: 0, 
+          left: 0, 
+          right: 0, 
+          bottom: 0, 
+          background: '#f8fafc', 
+          zIndex: 9999,
+          display: 'flex',
+          flexDirection: 'column'
+        }}>
+          <div style={{ 
+            padding: '20px 16px', 
+            display: 'flex', 
+            justifyContent: 'space-between', 
+            alignItems: 'center',
+            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+            color: 'white',
+            boxShadow: '0 4px 15px rgba(102, 126, 234, 0.3)'
+          }}>
+            <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ fontSize: 24 }}>🔔</span> Notifications
+            </h2>
+            <button 
+              onClick={() => setShowNotifications(false)}
+              style={{ 
+                background: 'rgba(255,255,255,0.2)', 
+                border: 'none', 
+                padding: '10px 20px', 
+                borderRadius: 10, 
+                cursor: 'pointer', 
+                fontWeight: 600,
+                color: 'white',
+                backdropFilter: 'blur(10px)'
+              }}
+            >
+              ✕ Fermer
+            </button>
+          </div>
+          
+          <div style={{ 
+            padding: '12px 16px', 
+            display: 'flex', 
+            gap: 10, 
+            justifyContent: 'flex-end', 
+            background: 'white',
+            borderBottom: '1px solid #e2e8f0',
+            boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
+          }}>
+            {notificationsList.length > 0 && (
+              <>
+                <button 
+                  onClick={() => notificationService.markAllAsRead()}
+                  style={{ 
+                    background: 'linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%)', 
+                    border: 'none', 
+                    padding: '8px 14px', 
+                    borderRadius: 8, 
+                    cursor: 'pointer', 
+                    fontSize: 13,
+                    fontWeight: 600,
+                    color: '#1d4ed8',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6
+                  }}
+                >
+                  ✓ Tout lire
+                </button>
+                <button 
+                  onClick={() => notificationService.clearAll()}
+                  style={{ 
+                    background: 'linear-gradient(135deg, #fee2e2 0%, #fecaca 100%)', 
+                    border: 'none', 
+                    padding: '8px 14px', 
+                    borderRadius: 8, 
+                    cursor: 'pointer', 
+                    fontSize: 13, 
+                    fontWeight: 600,
+                    color: '#dc2626',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6
+                  }}
+                >
+                  🗑️ Effacer
+                </button>
+              </>
+            )}
+          </div>
+          
+          <div style={{ flex: 1, overflow: 'auto', padding: 16 }}>
+            {notificationsList.length === 0 ? (
+              <div style={{ 
+                textAlign: 'center', 
+                padding: '60px 20px', 
+                background: 'white',
+                borderRadius: 16,
+                boxShadow: '0 4px 15px rgba(0,0,0,0.05)'
+              }}>
+                <div style={{ 
+                  width: 80,
+                  height: 80,
+                  borderRadius: '50%',
+                  background: 'linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  margin: '0 auto 20px',
+                  fontSize: 36
+                }}>🔔</div>
+                <p style={{ color: '#475569', fontWeight: 600, fontSize: 16 }}>Aucune notification</p>
+                <p style={{ fontSize: 13, color: '#94a3b8', marginTop: 8 }}>Vous serez notifié quand le statut de vos signalements change</p>
+                <div style={{ 
+                  marginTop: 20, 
+                  padding: 12, 
+                  background: localStorage.getItem('token') 
+                    ? 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)' 
+                    : 'linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)',
+                  borderRadius: 10,
+                  fontSize: 12
+                }}>
+                  {localStorage.getItem('token') 
+                    ? <span style={{ color: '#166534' }}>✓ Connecté - Notifications de vos signalements uniquement</span>
+                    : <span style={{ color: '#92400e' }}>⚠️ Non connecté - Connectez-vous pour recevoir vos notifications personnelles</span>}
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {notificationsList.map((notif) => (
+                  <div 
+                    key={notif.id} 
+                    style={{ 
+                      padding: 16,
+                      background: 'white',
+                      borderLeft: notif.read ? '4px solid #cbd5e1' : '4px solid #667eea',
+                      borderRadius: 12,
+                      cursor: 'pointer',
+                      boxShadow: notif.read ? '0 2px 8px rgba(0,0,0,0.05)' : '0 4px 15px rgba(102, 126, 234, 0.15)',
+                      transition: 'all 0.2s ease'
+                    }}
+                    onClick={() => notificationService.markAsRead(notif.id)}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <div style={{ flex: 1 }}>
+                        <h4 style={{ 
+                          margin: '0 0 6px 0', 
+                          fontWeight: notif.read ? 500 : 700,
+                          color: notif.read ? '#64748b' : '#1e293b',
+                          fontSize: 15
+                        }}>
+                          {notif.read ? '' : '🔵 '}{notif.reportTitle}
+                        </h4>
+                        <p style={{ margin: '0 0 8px 0', fontSize: 14, color: '#475569' }}>{notif.message}</p>
+                        <p style={{ margin: 0, fontSize: 12, color: '#94a3b8' }}>
+                          🕐 {new Date(notif.timestamp).toLocaleString('fr-FR')}
+                        </p>
+                      </div>
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          notificationService.deleteNotification(notif.id)
+                        }}
+                        style={{ 
+                          background: '#fee2e2', 
+                          border: 'none', 
+                          cursor: 'pointer', 
+                          color: '#dc2626', 
+                          width: 32,
+                          height: 32,
+                          borderRadius: 8,
+                          fontSize: 16,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center'
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </IonPage>
   )
 }

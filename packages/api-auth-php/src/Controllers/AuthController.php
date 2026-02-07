@@ -451,4 +451,86 @@ class AuthController
             echo json_encode(['error' => 'Push failed: ' . $e->getMessage()]);
         }
     }
+
+    public function clearFirebaseReports(): void
+    {
+        $admin = Jwt::authenticate();
+        if (!$admin || !in_array($admin['role'] ?? 'user', ['admin', 'manager'])) {
+            http_response_code(403);
+            echo json_encode(['error' => 'Forbidden']);
+            return;
+        }
+
+        try {
+            // Load Firebase credentials
+            $credentialsPath = __DIR__ . '/../../firebase-config.json';
+            if (!file_exists($credentialsPath)) {
+                http_response_code(200);
+                echo json_encode(['message' => 'Firebase credentials not found', 'deleted' => 0]);
+                return;
+            }
+
+            $credentials = json_decode(file_get_contents($credentialsPath), true);
+            $projectId = $credentials['project_id'] ?? '';
+            
+            if (!$projectId) {
+                http_response_code(200);
+                echo json_encode(['message' => 'Invalid Firebase credentials', 'deleted' => 0]);
+                return;
+            }
+
+            // Get Firebase access token
+            $token = $this->getFirebaseToken($credentials);
+            if (!$token) {
+                http_response_code(200);
+                echo json_encode(['message' => 'Failed to authenticate with Firebase', 'deleted' => 0]);
+                return;
+            }
+
+            $client = new \GuzzleHttp\Client();
+            $baseUrl = "https://firestore.googleapis.com/v1/projects/{$projectId}/databases/(default)/documents/reports";
+            $deleted = 0;
+
+            // List all documents in the reports collection
+            try {
+                $response = $client->get($baseUrl, [
+                    'headers' => [
+                        'Authorization' => "Bearer {$token}"
+                    ]
+                ]);
+                
+                $data = json_decode($response->getBody(), true);
+                $documents = $data['documents'] ?? [];
+
+                // Delete each document
+                foreach ($documents as $doc) {
+                    $docName = $doc['name'] ?? '';
+                    if ($docName) {
+                        try {
+                            $client->delete("https://firestore.googleapis.com/v1/{$docName}", [
+                                'headers' => [
+                                    'Authorization' => "Bearer {$token}"
+                                ]
+                            ]);
+                            $deleted++;
+                        } catch (\Exception $e) {
+                            error_log('Error deleting document: ' . $e->getMessage());
+                        }
+                    }
+                }
+            } catch (\Exception $e) {
+                error_log('Error listing documents: ' . $e->getMessage());
+            }
+
+            http_response_code(200);
+            echo json_encode([
+                'message' => 'Firebase reports cleared',
+                'deleted' => $deleted,
+                'status' => 'success'
+            ]);
+        } catch (\Exception $e) {
+            http_response_code(500);
+            echo json_encode(['error' => 'Clear failed: ' . $e->getMessage()]);
+        }
+    }
 }

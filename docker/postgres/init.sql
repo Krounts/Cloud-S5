@@ -30,8 +30,11 @@ CREATE TABLE IF NOT EXISTS reports (
   area_m2 DECIMAL(10, 2),
   budget DECIMAL(15, 2),
   company VARCHAR(255),
+  photos JSONB DEFAULT '[]'::jsonb,
   priority VARCHAR(50) DEFAULT 'medium' CHECK (priority IN ('low', 'medium', 'high')),
   created_at TIMESTAMP DEFAULT NOW(),
+  started_at TIMESTAMP,
+  completed_at TIMESTAMP,
   updated_at TIMESTAMP DEFAULT NOW()
 );
 
@@ -56,7 +59,7 @@ CREATE INDEX idx_sessions_token ON sessions(token);
 INSERT INTO users (email, password_hash, first_name, last_name, role, created_at)
 VALUES (
   'manager@cloud-s5.local',
-  '$2y$10$ktqRgL.b8yWkVzT//RLdT.1Eu3QmH.FHKklNz/YdNIdTBC3wK.q.m', -- bcrypt hash of 'manager123'
+  '$2y$10$ktqRgL.b8yWkVzT//RLdT.1Eu3QmH.FHKklNz/YdNIdTBC3wK.q.m', -- cryptage io fa 'manager123'
   'Manager',
   'Default',
   'manager',
