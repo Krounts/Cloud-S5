@@ -445,33 +445,37 @@ const MapPage: React.FC = () => {
                   }}
                 >
                   <Popup autoClose={false} closeOnClick={false}>
-                    <div style={{ minWidth: 200, maxWidth: 280 }}>
-                      <div style={{ fontWeight: 600, marginBottom: 4 }}>{r.title}</div>
-                      <div style={{ fontSize: 12, color: '#374151', marginBottom: 6 }}>{statusLabels[r.status] ?? r.status} • {fmtDate(r.created_at)}</div>
-                      <div style={{ fontSize: 13 }}>Surface: {fmtNum(r.area_m2, ' m²')}</div>
-                      <div style={{ fontSize: 13 }}>Budget: {fmtCur(r.budget)}</div>
-                      <div style={{ fontSize: 13 }}>Entreprise: {r.company}</div>
+                    <div className="custom-popup-mobile" style={{ minWidth: 200, maxWidth: 300 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
+                        <div style={{ fontWeight: 700, fontSize: 15 }}>{r.title}</div>
+                        <div style={{ fontSize: 12, color: '#4b5563' }}>{statusLabels[r.status] ?? r.status}</div>
+                      </div>
+
+                      <div style={{ fontSize: 12, color: '#6b7280', marginTop: 4 }}>{fmtDate(r.created_at)}</div>
+
+                      <div style={{ marginTop: 8, background: '#ffffff', padding: 8, borderRadius: 10, border: '1px solid rgba(15,23,42,0.04)' }}>
+                        <div style={{ fontSize: 13, marginBottom: 6 }}>📐 <strong>{fmtNum(r.area_m2, ' m²')}</strong></div>
+                        <div style={{ fontSize: 13, marginBottom: 6 }}>💰 <strong>{fmtCur(r.budget)}</strong></div>
+                        <div style={{ fontSize: 13 }}>🏢 {r.company}</div>
+                      </div>
+
                       {Array.isArray(r.photos) && r.photos.length > 0 && (
-                        <div style={{ marginTop: 10 }}>
-                          <div style={{ fontSize: 12, color: '#667eea', fontWeight: 600, marginBottom: 6 }}>
-                            📷 {r.photos.length} photo(s)
-                          </div>
+                        <div style={{ marginTop: 8 }} onClick={(e) => e.stopPropagation()}>
+                          <div style={{ fontSize: 12, color: '#64748b', marginBottom: 6 }}>📷 {r.photos.length} photo(s)</div>
                           <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 4 }}>
-                            {r.photos.map((src: string, idx: number) => (
+                            {r.photos.slice(0, 4).map((src: string, idx: number) => (
                               <img
                                 key={idx}
                                 src={src}
                                 alt={`Photo ${idx + 1}`}
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  setLightboxSrc(src)
-                                }}
-                                style={{ 
-                                  height: 70, 
-                                  width: 70, 
-                                  objectFit: 'cover', 
-                                  borderRadius: 6, 
-                                  border: '2px solid #667eea',
+                                onClick={(e) => { e.stopPropagation(); setLightboxSrc(src) }}
+                                style={{
+                                  height: 72,
+                                  width: 72,
+                                  objectFit: 'cover',
+                                  borderRadius: 8,
+                                  border: '1px solid #e6eefc',
+                                  boxShadow: '0 8px 20px rgba(2,6,23,0.06)',
                                   cursor: 'pointer',
                                   flexShrink: 0
                                 }}

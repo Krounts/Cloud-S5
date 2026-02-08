@@ -79,3 +79,8 @@
   user-select: none;
   -webkit-user-select: none;
 }
+
+/* Custom mobile popup tweaks */
+.custom-popup-mobile { font-size: 13px; color: #0f172a; }
+.custom-popup-mobile .cp-photos-count { color: #64748b; font-size: 12px; margin-bottom: 6px }
+.custom-popup-mobile img { border-radius: 8px; }

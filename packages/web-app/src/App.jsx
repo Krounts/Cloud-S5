@@ -1195,33 +1195,36 @@ function App() {
               {reports.map((report) => (
                 <Marker key={report.id} position={[report.latitude, report.longitude]}>
                   <Popup closeButton autoPan keepInView>
-                    <div className="text-sm space-y-2">
-                      <div className="font-bold text-gray-900">{report.title}</div>
-                      <div className="flex items-center gap-2 text-xs">
-                        <span className={`px-3 py-1 rounded-full text-[10px] font-bold ${statusColors[report.status] ?? 'bg-gray-100 text-gray-700'}`}>
-                          {statusLabels[report.status] ?? report.status}
-                        </span>
-                        <span className="text-gray-500">{formatDate(report.created_at)}</span>
+                    <div className="custom-popup">
+                      <div className="cp-head">
+                        <div className="cp-title">{report.title}</div>
+                        <div className="cp-meta">{formatDate(report.created_at)}</div>
                       </div>
-                      <div className="bg-gray-50 px-2 py-1 rounded text-xs text-gray-700 space-y-0.5">
-                        <div>📐 Surface: {formatNumber(report.area_m2, ' m²')}</div>
-                        <div>💰 Budget: {formatCurrency(report.budget)}</div>
-                        <div>🏢 {report.company}</div>
+
+                      <div className="cp-status">
+                        <span className={`status-badge status-${report.status}`}>{statusLabels[report.status] ?? report.status}</span>
                       </div>
+
+                      <div className="cp-body">
+                        <div className="cp-row">📐 Surface: <strong>{formatNumber(report.area_m2, ' m²')}</strong></div>
+                        <div className="cp-row">💰 Budget: <strong>{formatCurrency(report.budget)}</strong></div>
+                        <div className="cp-row">🏢 {report.company}</div>
+                      </div>
+
                       {Array.isArray(report.photos) && report.photos.length > 0 && (
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginTop: 6 }}>
-                          {report.photos.slice(0, 3).map((src, idx) => (
-                            <img
-                              key={`${report.id}-photo-${idx}`}
-                              src={src}
-                              alt={`photo-${idx + 1}`}
-                              style={{ width: '100%', height: 54, objectFit: 'cover', borderRadius: 6, border: '1px solid #e5e7eb', cursor: 'pointer' }}
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                setLightboxSrc(src)
-                              }}
-                            />
-                          ))}
+                        <div className="cp-photos" onClick={(e)=>e.stopPropagation()}>
+                          <div className="cp-photos-count">📷 {report.photos.length} photo(s)</div>
+                          <div className="cp-thumb-grid">
+                            {report.photos.slice(0, 4).map((src, idx) => (
+                              <img
+                                key={`${report.id}-photo-${idx}`}
+                                src={src}
+                                alt={`photo-${idx + 1}`}
+                                className="cp-thumb"
+                                onClick={(e) => { e.stopPropagation(); setLightboxSrc(src) }}
+                              />
+                            ))}
+                          </div>
                         </div>
                       )}
                     </div>
