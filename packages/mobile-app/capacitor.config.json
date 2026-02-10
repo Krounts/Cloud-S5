@@ -1,0 +1,6 @@
+{
+  "appId": "com.clouds5.mobile",
+  "appName": "CloudS5",
+  "webDir": "dist",
+  "bundledWebRuntime": false
+}

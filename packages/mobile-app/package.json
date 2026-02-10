@@ -6,9 +6,14 @@
   "scripts": {
     "dev": "vite --port 8100",
     "build": "vite build",
+    "build:web": "vite build",
     "preview": "vite preview",
     "lint": "eslint src --fix",
-    "test": "jest"
+    "test": "jest",
+    "capacitor:sync": "npx cap sync",
+    "capacitor:add:android": "npx cap add android",
+    "capacitor:open:android": "npx cap open android",
+    "prepare:android": "npm run build:web && npx cap sync android"
   },
   "dependencies": {
     "@ionic/react": "^7.6.0",

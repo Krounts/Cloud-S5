@@ -1,0 +1,119 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ 'V4' ]
+  workflow_dispatch:
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '11'
+
+      - name: Install Android SDK and build tools
+        uses: r0adkll/setup-android@v2
+        with:
+          api-levels: '33'
+          build-tools: '33.0.2'
+          target: 'android-33'
+
+      - name: Install npm dependencies
+        run: |
+          cd packages/mobile-app
+          npm ci
+
+      - name: Build web assets
+        run: |
+          cd packages/mobile-app
+          npm run build:web
+
+      - name: Install Capacitor CLI
+        run: npm install -g @capacitor/cli
+
+      - name: Sync Capacitor Android
+        run: |
+          cd packages/mobile-app
+          npx cap add android || true
+          npx cap sync android
+
+      - name: Build Android release
+        run: |
+          cd packages/mobile-app/android
+          ./gradlew assembleRelease --no-daemon
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: packages/mobile-app/android/app/build/outputs/**/*.apk
+name: Build Android APK
+
+on:
+  push:
+    branches: [ 'V4' ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install Node dependencies
+        run: |
+          cd packages/mobile-app
+          npm ci
+
+      - name: Build web assets
+        run: |
+          cd packages/mobile-app
+          npm run build:web
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: r0adkll/setup-android@v2
+        with:
+          api-level: 33
+          build-tools: '33.0.2'
+          ndk: '21.4.7075529'
+
+      - name: Add and sync Capacitor Android
+        run: |
+          cd packages/mobile-app
+          npx cap add android || true
+          npx cap sync android
+
+      - name: Build Android APK (Gradle)
+        run: |
+          cd packages/mobile-app/android
+          chmod +x ./gradlew
+          ./gradlew assembleRelease -Porg.gradle.daemon=false
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloud-s5-android-apk
+          path: packages/mobile-app/android/app/build/outputs/apk/release/*.apk
