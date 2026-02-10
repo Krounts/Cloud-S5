@@ -69,6 +69,7 @@ const normalizeReports = (raw: any[]): any[] => {
         budget: Number((item as any).budget ?? 0),
         company: (item as any).company ?? (item as any).contractor ?? 'Non renseigné',
         photos: Array.isArray((item as any).photos) ? (item as any).photos : [],
+        severity_level: Number((item as any).severity_level ?? 1),
         created_at: (item as any).created_at ?? (item as any).date ?? (item as any).createdAt ?? new Date().toISOString(),
       }
     })
@@ -456,6 +457,7 @@ const MapPage: React.FC = () => {
                       <div style={{ marginTop: 8, background: '#ffffff', padding: 8, borderRadius: 10, border: '1px solid rgba(15,23,42,0.04)' }}>
                         <div style={{ fontSize: 13, marginBottom: 6 }}>📐 <strong>{fmtNum(r.area_m2, ' m²')}</strong></div>
                         <div style={{ fontSize: 13, marginBottom: 6 }}>💰 <strong>{fmtCur(r.budget)}</strong></div>
+                        <div style={{ fontSize: 13, marginBottom: 6 }}>⚠️ Gravité: <strong>{r.severity_level ?? 1}</strong></div>
                         <div style={{ fontSize: 13 }}>🏢 {r.company}</div>
                       </div>
 

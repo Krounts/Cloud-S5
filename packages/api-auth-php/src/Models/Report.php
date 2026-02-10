@@ -9,7 +9,7 @@ class Report
     {
         $stmt = $db->prepare('
             SELECT id, user_id, title, description, latitude, longitude, status, 
-                   area_m2, budget, company, photos, created_at, started_at, completed_at, updated_at
+                   area_m2, budget, severity_level, company, photos, created_at, started_at, completed_at, updated_at
             FROM reports 
             ORDER BY created_at DESC
         ');
@@ -25,7 +25,7 @@ class Report
     {
         $stmt = $db->prepare('
             SELECT id, user_id, title, description, latitude, longitude, status, 
-                   area_m2, budget, company, photos, created_at, started_at, completed_at, updated_at
+                   area_m2, budget, severity_level, company, photos, created_at, started_at, completed_at, updated_at
             FROM reports 
             WHERE id = :id
         ');
@@ -47,13 +47,14 @@ class Report
         string $status,
         float $areaMm2,
         float $budget,
+        ?int $severityLevel,
         string $company,
         array $photos
     ): array {
         $stmt = $db->prepare('
-            INSERT INTO reports (user_id, title, description, latitude, longitude, status, area_m2, budget, company, photos, created_at)
-            VALUES (:user_id, :title, :description, :latitude, :longitude, :status, :area_m2, :budget, :company, :photos, NOW())
-            RETURNING id, user_id, title, description, latitude, longitude, status, area_m2, budget, company, photos, created_at, started_at, completed_at
+            INSERT INTO reports (user_id, title, description, latitude, longitude, status, area_m2, budget, severity_level, company, photos, created_at)
+            VALUES (:user_id, :title, :description, :latitude, :longitude, :status, :area_m2, :budget, :severity_level, :company, :photos, NOW())
+            RETURNING id, user_id, title, description, latitude, longitude, status, area_m2, budget, severity_level, company, photos, created_at, started_at, completed_at
         ');
         $stmt->execute([
             'user_id' => $userId,
@@ -64,6 +65,7 @@ class Report
             'status' => $status,
             'area_m2' => $areaMm2,
             'budget' => $budget,
+            'severity_level' => $severityLevel,
             'company' => $company,
             'photos' => json_encode($photos),
         ]);

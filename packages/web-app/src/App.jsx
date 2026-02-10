@@ -91,6 +91,7 @@ const normalizeReports = (raw) => {
         status: item.status ?? 'new',
         area_m2: Number(item.area_m2 ?? item.area ?? 0),
         budget: Number(item.budget ?? 0),
+        severity_level: Number(item.severity_level ?? 1),
         company: item.company ?? item.contractor ?? 'Non renseigné',
         photos: Array.isArray(item.photos) ? item.photos : [],
         created_at: item.created_at ?? item.date ?? item.createdAt ?? new Date().toISOString(),
@@ -194,7 +195,15 @@ function App() {
       },
     })
     const text = await resp.text()
-    const data = text ? JSON.parse(text) : null
+    let data = null
+    if (text) {
+      try {
+        data = JSON.parse(text)
+      } catch (err) {
+        console.error('Invalid JSON from API:', text)
+        throw new Error('Réponse invalide du serveur: ' + text)
+      }
+    }
     if (!resp.ok) {
       throw new Error(data?.error || `Erreur API (${resp.status})`)
     }
@@ -296,6 +305,7 @@ function App() {
         description: report.description,
         area_m2: Number(report.area_m2) || 0,
         budget: Number(report.budget) || 0,
+        severity_level: Number(report.severity_level) || 1,
         company: report.company,
         status: report.status,
       }
@@ -960,6 +970,17 @@ function App() {
                               <option value="closed">Clos</option>
                             </select>
                           </div>
+                          <div className="form-group">
+                            <label>Gravité (1-10)</label>
+                            <select
+                              value={report.severity_level ?? 1}
+                              onChange={(e) => handleReportFieldChange(report.id, 'severity_level', Number(e.target.value))}
+                            >
+                              {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
+                                <option key={n} value={n}>{n}</option>
+                              ))}
+                            </select>
+                          </div>
                         </div>
 
                         <div className="report-edit-footer">
@@ -1207,6 +1228,7 @@ function App() {
 
                       <div className="cp-body">
                         <div className="cp-row">📐 Surface: <strong>{formatNumber(report.area_m2, ' m²')}</strong></div>
+                        <div className="cp-row">⚠️ Gravité: <strong>{report.severity_level ?? 1}</strong></div>
                         <div className="cp-row">💰 Budget: <strong>{formatCurrency(report.budget)}</strong></div>
                         <div className="cp-row">🏢 {report.company}</div>
                       </div>

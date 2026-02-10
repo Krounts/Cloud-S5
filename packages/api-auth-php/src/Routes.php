@@ -3,6 +3,7 @@ namespace App;
 
 use App\Controllers\AuthController;
 use App\Controllers\ReportController;
+use App\Controllers\SettingsController;
 
 class Routes
 {
@@ -10,6 +11,7 @@ class Routes
     {
         $auth = new AuthController();
         $report = new ReportController();
+        $settings = new SettingsController();
 
         // Authentication routes
         $router->post('/api/auth/register', fn() => $auth->register());
@@ -27,5 +29,10 @@ class Routes
         $router->post('/api/reports', fn() => $report->create());
         $router->get('/api/reports/statistics', fn() => $report->getStatistics());
         $router->post('/api/admin/reports/update', fn() => $report->updateAdmin());
+
+        // Public settings
+        $router->get('/api/settings', fn() => $settings->getPublic());
+        // Admin: update settings
+        $router->post('/api/admin/settings/update', fn() => $settings->update());
     }
 }

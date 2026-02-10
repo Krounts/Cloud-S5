@@ -25,6 +25,10 @@ RUN composer install --no-dev --prefer-dist --no-interaction
 # Set proper permissions
 RUN chown -R www-data:www-data /var/www/html
 
+# Copy custom PHP settings to allow larger POST payloads (for base64 images)
+# This file is provided in the repo as `custom-php.ini` and will be loaded by PHP
+COPY custom-php.ini /usr/local/etc/php/conf.d/custom-php.ini
+
 # Apache DocumentRoot
 ENV APACHE_DOCUMENT_ROOT=/var/www/html/public
 RUN sed -ri -e 's!/var/www/html!/var/www/html/public!g' /etc/apache2/sites-available/*.conf \

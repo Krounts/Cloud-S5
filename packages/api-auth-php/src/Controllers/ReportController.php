@@ -4,6 +4,7 @@ namespace App\Controllers;
 use App\Database;
 use App\Jwt;
 use App\Models\Report;
+use App\Models\Settings;
 
 class ReportController
 {
@@ -45,7 +46,10 @@ class ReportController
         $longitude = (float)($input['longitude'] ?? 0);
         $status = trim($input['status'] ?? 'new');
         $areaMm2 = (float)($input['area_m2'] ?? 0);
-        $budget = (float)($input['budget'] ?? 0);
+        // Do not set severity by default on creation. Manager assigns severity later.
+        $severityLevel = array_key_exists('severity_level', $input) ? (int)$input['severity_level'] : null;
+        // Budget will be computed when manager assigns severity. Keep null/0 for now.
+        $budget = array_key_exists('budget', $input) ? (float)$input['budget'] : 0;
         $company = trim($input['company'] ?? '');
         $photos = $input['photos'] ?? [];
         if (!is_array($photos)) {
@@ -59,7 +63,9 @@ class ReportController
         }
 
         $db = Database::getConnection();
-        $report = Report::create($db, $userId, $title, $description, $latitude, $longitude, $status, $areaMm2, $budget, $company, $photos);
+
+        // Do NOT compute budget now. Budget is computed when manager assigns severity.
+        $report = Report::create($db, $userId, $title, $description, $latitude, $longitude, $status, $areaMm2, $budget, $severityLevel, $company, $photos);
 
         http_response_code(201);
         echo json_encode(['message' => 'Report created successfully', 'report' => $report, 'user_id' => $userId]);
@@ -105,6 +111,7 @@ class ReportController
         if (array_key_exists('description', $input)) $fields['description'] = trim((string)$input['description']);
         if (array_key_exists('area_m2', $input)) $fields['area_m2'] = (float)$input['area_m2'];
         if (array_key_exists('budget', $input)) $fields['budget'] = (float)$input['budget'];
+        if (array_key_exists('severity_level', $input)) $fields['severity_level'] = (int)$input['severity_level'];
         if (array_key_exists('company', $input)) $fields['company'] = trim((string)$input['company']);
         if (array_key_exists('status', $input)) {
             $status = trim((string)$input['status']);
@@ -114,6 +121,37 @@ class ReportController
                 return;
             }
             $fields['status'] = $status;
+        }
+
+        // Load current report to validate allowed changes
+        $dbTmp = Database::getConnection();
+        $current = Report::findById($dbTmp, $id) ?? [];
+
+        // Manager can assign severity once. If severity already set, forbid changing it again.
+        if (array_key_exists('severity_level', $input) && $current['severity_level'] !== null) {
+            http_response_code(400);
+            echo json_encode(['error' => 'La gravité a déjà été attribuée et ne peut pas être modifiée']);
+            return;
+        }
+        $area = $fields['area_m2'] ?? $current['area_m2'] ?? 0;
+        $severity = $fields['severity_level'] ?? $current['severity_level'] ?? 1;
+
+        $shouldRecompute = false;
+        if (!array_key_exists('budget', $fields)) {
+            $shouldRecompute = true;
+        } else {
+            // Budget was provided in payload. If area or severity changed and the provided budget
+            // equals the current stored budget (no intentional override), recompute.
+            $providedBudget = (float)$fields['budget'];
+            $currentBudget = (float)($current['budget'] ?? 0);
+            if ((array_key_exists('severity_level', $fields) || array_key_exists('area_m2', $fields)) && abs($providedBudget - $currentBudget) < 0.01) {
+                $shouldRecompute = true;
+            }
+        }
+
+        if ($shouldRecompute && (float)$area > 0) {
+            $price = Settings::getPricePerM2($dbTmp);
+            $fields['budget'] = round($price * max(1, (int)$severity) * (float)$area, 2);
         }
 
         if (empty($fields)) {

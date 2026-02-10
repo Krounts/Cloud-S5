@@ -65,3 +65,19 @@ VALUES (
   'manager',
   NOW()
 ) ON CONFLICT (email) DO NOTHING;
+
+-- Add severity level to reports (1..10) for existing databases
+ALTER TABLE reports
+  ADD COLUMN IF NOT EXISTS severity_level INTEGER DEFAULT 1 CHECK (severity_level BETWEEN 1 AND 10);
+
+-- Settings table to store key/value configuration such as price_per_m2
+CREATE TABLE IF NOT EXISTS settings (
+  id SERIAL PRIMARY KEY,
+  key VARCHAR(255) UNIQUE NOT NULL,
+  value VARCHAR(255) NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Seed a default price per m2 if missing (value stored as numeric string)
+INSERT INTO settings (key, value) VALUES ('price_per_m2', '35000') ON CONFLICT (key) DO NOTHING;

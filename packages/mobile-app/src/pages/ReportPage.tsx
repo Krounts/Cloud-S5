@@ -24,7 +24,6 @@ const ReportPage: React.FC = () => {
     title: '',
     description: '',
     area_m2: '',
-    budget: '',
     company: '',
     status: 'new',
     latitude: 0,
@@ -134,7 +133,6 @@ const ReportPage: React.FC = () => {
         title: formData.title.trim(),
         description: formData.description.trim(),
         area_m2: parseFloat(formData.area_m2) || 0,
-        budget: parseFloat(formData.budget) || 0,
         company: formData.company.trim(),
         status: formData.status,
         latitude: formData.latitude,
@@ -189,7 +187,13 @@ const ReportPage: React.FC = () => {
         throw new Error('Le serveur n\'a pas répondu. Vérifiez que le backend est lancé avec: yarn docker:up')
       }
 
-      const data = JSON.parse(text)
+      let data = null
+      try {
+        data = JSON.parse(text)
+      } catch (err) {
+        // If the response is not valid JSON, surface the raw text for easier debugging
+        throw new Error('Réponse invalide du serveur: ' + text)
+      }
 
       if (response.ok) {
         setSubmitted(true)
@@ -197,7 +201,6 @@ const ReportPage: React.FC = () => {
           title: '',
           description: '',
           area_m2: '',
-          budget: '',
           company: '',
           status: 'new',
           latitude: payload.latitude,
@@ -206,7 +209,7 @@ const ReportPage: React.FC = () => {
         setPhotos([])
         setTimeout(() => setSubmitted(false), 3000)
       } else {
-        throw new Error(data.error || 'Erreur du serveur (' + response.status + ')')
+        throw new Error(data?.error || 'Erreur du serveur (' + response.status + ')')
       }
     } finally {
       clearTimeout(timeoutId)
@@ -328,10 +331,7 @@ const ReportPage: React.FC = () => {
           <IonInput name="area_m2" type="number" value={formData.area_m2} onIonChange={handleInputChange} placeholder="0" />
         </IonItem>
 
-        <IonItem>
-          <IonLabel position="floating">Budget estimé (MGA)</IonLabel>
-          <IonInput name="budget" type="number" value={formData.budget} onIonChange={handleInputChange} placeholder="0" />
-        </IonItem>
+        {/* Budget and Gravité removed from mobile report form — computed/assigned in backoffice */}
 
         <IonItem>
           <IonLabel position="floating">Entreprise responsable</IonLabel>
